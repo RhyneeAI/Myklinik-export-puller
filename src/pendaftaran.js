@@ -28,15 +28,27 @@ function parseExcelToJson(buffer) {
   }
 }
 
-async function exportPage(context, hash, dateStart, dateEnd, outputPath) {
+async function navigateToReport(page, menuLabel) {
+  const parents = ['Pendaftaran', 'Report Pendaftaran'];
+  for (const p of parents) {
+    const isOpen = await page.$(`li.open a:has-text("${p}")`);
+    if (!isOpen) {
+      await page.click(`a:has-text("${p}")`);
+      await page.waitForTimeout(500);
+    }
+  }
+  await page.click(`a[href="#klinik/report/${menuLabel}/${menuLabel}"]`);
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(2000);
+}
+
+async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
   const page = await context.newPage();
   try {
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(2000);
 
-    await page.evaluate((h) => { window.location.hash = h; }, hash);
-    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+    await navigateToReport(page, menuLabel);
 
     await page.evaluate(({ start, end }) => {
       const setVal = (id, val) => {
@@ -78,12 +90,11 @@ export async function fetchPendaftaran(year, month, context) {
   const dateStart = formatDateDMY(year, month, 1);
   const dateEnd = formatDateDMY(year, month, lastDay);
 
-  const hash = '#klinik/report/infodaftarharian/infodaftarharian';
   const dirName = path.join(OUTPUT_DIR, 'pendaftaran', String(year));
   ensureDir(dirName);
   const outputPath = path.join(dirName, `${APP_TARGET}_${formatFileDate(year, month)}.xlsx`);
 
-  const result = await exportPage(context, hash, dateStart, dateEnd, outputPath);
+  const result = await exportPage(context, 'infodaftarharian', dateStart, dateEnd, outputPath);
 
   if (result.searchFailed) {
     return { buffer: null, status: 401, dateStart, dateEnd, searchFailed: true, searchError: result.searchError };

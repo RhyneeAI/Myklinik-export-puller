@@ -28,15 +28,27 @@ function parseExcelToJson(buffer) {
   }
 }
 
-async function exportPage(context, hash, dateStart, outputPath) {
+async function navigateToReport(page, menuLabel) {
+  const parents = ['Pendaftaran', 'Report Pendaftaran'];
+  for (const p of parents) {
+    const isOpen = await page.$(`li.open a:has-text("${p}")`);
+    if (!isOpen) {
+      await page.click(`a:has-text("${p}")`);
+      await page.waitForTimeout(500);
+    }
+  }
+  await page.click(`a[href="#klinik/report/${menuLabel}/${menuLabel}"]`);
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(2000);
+}
+
+async function exportPage(context, menuLabel, dateStart, outputPath) {
   const page = await context.newPage();
   try {
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(2000);
 
-    await page.evaluate((h) => { window.location.hash = h; }, hash);
-    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+    await navigateToReport(page, menuLabel);
 
     await page.evaluate(({ start }) => {
       const setVal = (id, val) => {
@@ -106,13 +118,12 @@ export async function processKunjungan(log, progress, context) {
 
       while (retries <= maxRetries && !success) {
         try {
-          const hash = '#klinik/report/inforekapkunjungan/inforekapkunjungan';
           const dirName = path.join(OUTPUT_DIR, 'kunjungan', String(year));
           ensureDir(dirName);
           const dateKey = formatFileDate(year, month, day);
           const outputPath = path.join(dirName, `${APP_TARGET}_${dateKey}.xlsx`);
 
-          const result = await exportPage(context, hash, dateStr, outputPath);
+          const result = await exportPage(context, 'inforekapkunjungan', dateStr, outputPath);
 
           if (result.searchFailed) {
             log.warn(`  ${label}  Search: ${result.searchError}`);
