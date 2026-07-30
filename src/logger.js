@@ -8,13 +8,26 @@ const BLU = '\x1b[34m';
 const MGN = '\x1b[35m';
 const CYN = '\x1b[36m';
 
-function bold(t) { return `${B}${t}${R}`; }
-function dim(t) { return `${D}${t}${R}`; }
-function green(t) { return `${GRN}${t}${R}`; }
-function yellow(t) { return `${YLW}${t}${R}`; }
-function red(t) { return `${RED}${t}${R}`; }
-function blue(t) { return `${BLU}${t}${R}`; }
-function cyan(t) { return `${CYN}${t}${R}`; }
+export function bold(t) { return `${B}${t}${R}`; }
+export function dim(t) { return `${D}${t}${R}`; }
+export function green(t) { return `${GRN}${t}${R}`; }
+export function yellow(t) { return `${YLW}${t}${R}`; }
+export function red(t) { return `${RED}${t}${R}`; }
+export function blue(t) { return `${BLU}${t}${R}`; }
+export function cyan(t) { return `${CYN}${t}${R}`; }
+
+function stripAnsi(s) {
+  return s.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+const TL = '\u250C'; const TR = '\u2510';
+const BL = '\u2514'; const BR = '\u2518';
+const VL = '\u2502'; const HL = '\u2500';
+const MA = '\u252C'; const MB = '\u2534';
+const ML = '\u251C'; const MR = '\u2524';
+const CC = '\u253C';
+
+let _tableCols = [];
 
 export function createLogger(projectName, version) {
   function header(target, mode) {
@@ -86,9 +99,61 @@ export function createLogger(projectName, version) {
     console.log(...args);
   }
 
+  function startTable(columns) {
+    _tableCols = columns.map(c => ({
+      ...c,
+      width: Math.max(c.label.length + 2, (c.width || 10) + 2),
+    }));
+    const top = _tableCols.map((c, i) =>
+      HL.repeat(c.width) + (i < _tableCols.length - 1 ? MA : '')
+    ).join('');
+    console.log(`  ${TL}${top}${TR}`);
+
+    const hdr = _tableCols.map((c, i) =>
+      ' ' + padCenter(c.label, c.width - 2) + ' ' + (i < _tableCols.length - 1 ? VL : '')
+    ).join('');
+    console.log(`  ${VL}${hdr}${VL}`);
+
+    const sep = _tableCols.map((c, i) =>
+      HL.repeat(c.width) + (i < _tableCols.length - 1 ? CC : '')
+    ).join('');
+    console.log(`  ${ML}${sep}${MR}`);
+  }
+
+  function tableRow(values) {
+    const row = _tableCols.map((c, i) => {
+      const val = values[i] !== undefined ? String(values[i]) : '';
+      const plain = stripAnsi(val);
+      const padNeeded = c.width - 2 - plain.length;
+      if (padNeeded >= 0) {
+        return ' ' + val + ' '.repeat(padNeeded) + ' ' + (i < _tableCols.length - 1 ? VL : '');
+      }
+      const truncated = plain.slice(0, c.width - 5) + '...';
+      return ' ' + truncated + ' ' + (i < _tableCols.length - 1 ? VL : '');
+    }).join('');
+    console.log(`  ${VL}${row}${VL}`);
+  }
+
+  function endTable() {
+    const bot = _tableCols.map((c, i) =>
+      HL.repeat(c.width) + (i < _tableCols.length - 1 ? MB : '')
+    ).join('');
+    console.log(`  ${BL}${bot}${BR}`);
+    _tableCols = [];
+  }
+
   return {
     header, section, divider, step, data,
     warn, error, info, success,
     summary, footer, raw,
+    startTable, tableRow, endTable,
   };
+}
+
+function padCenter(s, w) {
+  const pad = w - stripAnsi(s).length;
+  if (pad <= 0) return s.slice(0, w);
+  const left = Math.floor(pad / 2);
+  const right = pad - left;
+  return ' '.repeat(left) + s + ' '.repeat(right);
 }

@@ -4,6 +4,7 @@ import XLSX from 'xlsx';
 import { http } from './httpClient.js';
 import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay } from './utils.js';
 import { updatePendaftaranProgress } from './progress.js';
+import { dim, green, yellow, red } from './logger.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -63,15 +64,25 @@ export async function processPendaftaran(log, progress) {
   let year = start.year;
   let month = start.month;
 
+  log.startTable([
+    { label: 'Period', width: 10 },
+    { label: 'Status', width: 8 },
+    { label: 'Rows', width: 6 },
+    { label: 'File', width: 30 },
+  ]);
+
   while (year > end.year || (year === end.year && month >= end.month)) {
-    const label = `${year}_${String(month).padStart(2, '0')}`;
+    const period = `${year}-${String(month).padStart(2, '0')}`;
+    const label = period.replace('-', '_');
+    const dateKey = formatFileDate(year, month);
+    const fname = `${APP_TARGET}_${dateKey}.xlsx`;
 
     const cursor = progress.pendaftaran.cursor;
     if (cursor) {
       const cursorLabel = `${cursor.year}_${String(cursor.month).padStart(2, '0')}`;
       const cmp = `${year}_${String(month).padStart(2, '0')}`;
       if (cmp >= cursorLabel) {
-        log.data(`  ${label}`, 'SKIP', '(already completed)');
+        log.tableRow([dim(period), yellow('SKIP'), dim('-'), dim(fname)]);
         month--;
         if (month < 1) { month = 12; year--; }
         continue;
@@ -86,15 +97,16 @@ export async function processPendaftaran(log, progress) {
       try {
         const { buffer, status, url } = await fetchPendaftaran(year, month);
         const base = ENDPOINT_URL.replace(/\/+$/, '');
-        log.raw(`${base}${decodeURIComponent(url)}`);
+        console.log(`  ${dim(base + decodeURIComponent(url))}`);
 
         if (looksLikeHTML(buffer)) {
           const summary = summarizeHtml(buffer);
           if (summary.hasLogin) {
-            log.error(`  ${label}  Session expired!`);
+            log.error(`${period}  Session expired!`);
+            log.endTable();
             return { interrupted: true, reason: 'Session expired' };
           }
-          log.warn(`  ${label}  Got HTML instead of Excel (HTTP ${status}) ${summary.title ? `- ${summary.title}` : ''}`);
+          log.tableRow([period, red('HTML'), dim(String(status)), dim(summary.title || '')]);
           retries++;
           if (retries <= maxRetries) {
             log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
@@ -109,7 +121,6 @@ export async function processPendaftaran(log, progress) {
         const dirName = path.join(OUTPUT_DIR, 'pendaftaran', String(year));
         ensureDir(dirName);
 
-        const dateKey = formatFileDate(year, month);
         const excelName = `${APP_TARGET}_${dateKey}.xlsx`;
         const jsonName = `${APP_TARGET}_${dateKey}.json`;
 
@@ -118,12 +129,12 @@ export async function processPendaftaran(log, progress) {
 
         updatePendaftaranProgress(year, month);
 
-        log.data(`  ${label}`, 'SAVED', `${rowCount} rows`);
+        log.tableRow([period, green('SAVED'), String(rowCount), fname]);
         totalFiles++;
         totalRows += rowCount;
         success = true;
       } catch (err) {
-        log.error(`  ${label}  ${err.message || err}`);
+        log.tableRow([period, red('FAIL'), dim('-'), dim(err.message || err)]);
         retries++;
         if (retries <= maxRetries) {
           log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
@@ -133,8 +144,9 @@ export async function processPendaftaran(log, progress) {
     }
 
     if (!success) {
-      log.error(`  ${label}  Failed after ${maxRetries} retries`);
-      return { interrupted: true, reason: `Failed at ${label} after retries` };
+      log.endTable();
+      log.error(`${period}  Failed after ${maxRetries} retries`);
+      return { interrupted: true, reason: `Failed at ${period} after retries` };
     }
 
     if (year === end.year && month === end.month) break;
@@ -145,5 +157,6 @@ export async function processPendaftaran(log, progress) {
     await requestDelay();
   }
 
+  log.endTable();
   return { interrupted: false, totalFiles, totalRows };
 }
