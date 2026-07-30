@@ -5,10 +5,9 @@ import { http, jar } from './httpClient.js';
 
 dotenv.config();
 
-const { ENDPOINT_URL, SERVEID, SOKKACREATIVEID, TOKEN, OUTPUT_DIR } = process.env;
+const { ENDPOINT_URL, COOKIES_JSON, SERVERID, SOKKACREATIVEID, TOKEN, OUTPUT_DIR, SESSION_NAME, SESSION_VALUE, KEY1, KEY2, KEY3, KEY4 } = process.env;
 
 let csrfToken = '';
-let authToken = TOKEN || '';
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -18,21 +17,23 @@ export function getCsrfToken() {
   return csrfToken;
 }
 
-export function getAuthToken() {
-  return authToken;
-}
-
 export async function setCookies() {
   const domain = new URL(ENDPOINT_URL).hostname;
 
-  if (SERVEID) {
-    await jar.setCookie(`SERVEID=${SERVEID}; Path=/; Domain=${domain}`, ENDPOINT_URL);
-  }
-  if (SOKKACREATIVEID) {
-    await jar.setCookie(`SOKKACREATIVEID=${SOKKACREATIVEID}; Path=/; Domain=${domain}`, ENDPOINT_URL);
-  }
-  if (TOKEN) {
-    await jar.setCookie(`token=${TOKEN}; Path=/; Domain=${domain}`, ENDPOINT_URL);
+  if (COOKIES_JSON) {
+    const allCookies = JSON.parse(COOKIES_JSON);
+    for (const c of allCookies) {
+      await jar.setCookie(`${c.name}=${c.value}; Path=${c.path || '/'}; Domain=${c.domain || domain}`, ENDPOINT_URL);
+    }
+  } else {
+    if (SERVERID) await jar.setCookie(`SERVERID=${SERVERID}; Path=/; Domain=${domain}`, ENDPOINT_URL);
+    if (SOKKACREATIVEID) await jar.setCookie(`SOKKACREATIVEID=${SOKKACREATIVEID}; Path=/; Domain=${domain}`, ENDPOINT_URL);
+    if (TOKEN) await jar.setCookie(`token=${TOKEN}; Path=/; Domain=${domain}`, ENDPOINT_URL);
+    if (SESSION_NAME && SESSION_VALUE) await jar.setCookie(`${SESSION_NAME}=${SESSION_VALUE}; Path=/; Domain=${domain}`, ENDPOINT_URL);
+    if (KEY1) await jar.setCookie(`key1=${KEY1}; Path=/; Domain=${domain}`, ENDPOINT_URL);
+    if (KEY2) await jar.setCookie(`key2=${KEY2}; Path=/; Domain=${domain}`, ENDPOINT_URL);
+    if (KEY3) await jar.setCookie(`key3=${KEY3}; Path=/; Domain=${domain}`, ENDPOINT_URL);
+    if (KEY4) await jar.setCookie(`key4=${KEY4}; Path=/; Domain=${domain}`, ENDPOINT_URL);
   }
 
   const cookies = await jar.getCookies(ENDPOINT_URL);
