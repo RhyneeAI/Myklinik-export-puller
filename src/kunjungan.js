@@ -4,7 +4,7 @@ import XLSX from 'xlsx';
 import { http } from './httpClient.js';
 import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay } from './utils.js';
 import { updateKunjunganProgress } from './progress.js';
-import { getCsrfToken, getAuthToken } from './auth.js';
+import { getCsrfToken } from './auth.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -69,8 +69,6 @@ export async function fetchKunjungan(year, month, day) {
   };
   const t = getCsrfToken();
   if (t) headers['X-CSRF-TOKEN'] = t;
-  const a = getAuthToken();
-  if (a) headers['Authorization'] = `Bearer ${a}`;
 
   // Step 1: POST search to populate server session
   const searchRes = await http.post('/sc.core.php', kunjunganSearchPayload(dateStr), {

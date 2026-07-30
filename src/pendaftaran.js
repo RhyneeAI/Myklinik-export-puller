@@ -5,7 +5,7 @@ import { http } from './httpClient.js';
 import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay } from './utils.js';
 import { updatePendaftaranProgress } from './progress.js';
 import { dim, green, yellow, red } from './logger.js';
-import { getCsrfToken, getAuthToken } from './auth.js';
+import { getCsrfToken } from './auth.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -72,8 +72,6 @@ export async function fetchPendaftaran(year, month) {
   };
   const t = getCsrfToken();
   if (t) headers['X-CSRF-TOKEN'] = t;
-  const a = getAuthToken();
-  if (a) headers['Authorization'] = `Bearer ${a}`;
 
   // Step 1: POST search to populate server session
   const searchRes = await http.post('/sc.core.php', pendaftaranSearchPayload(dateStart, dateEnd), {
