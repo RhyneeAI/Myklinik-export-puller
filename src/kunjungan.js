@@ -28,6 +28,23 @@ function parseExcelToJson(buffer) {
   }
 }
 
+async function tryLoginIfModal(page) {
+  for (let w = 0; w < 10; w++) {
+    const loginForm = await page.$('#oForm:has(#ckeyKlinik)');
+    if (!loginForm) { await page.waitForTimeout(1000); continue; }
+    const captcha = (await page.textContent('#captcha')).trim();
+    await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
+    await page.fill('#cUser', process.env.LOGIN_USER);
+    await page.fill('#cPassword', process.env.LOGIN_PASS);
+    await page.fill('#cCaptcha', captcha);
+    await page.click('#btnSubmit');
+    await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+    return true;
+  }
+  return false;
+}
+
 async function exportPage(context, menuLabel, dateStart, outputPath) {
   const page = await context.newPage();
   try {
@@ -35,7 +52,7 @@ async function exportPage(context, menuLabel, dateStart, outputPath) {
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
-    // Navigate via sidebar menu using DOM click (triggers onclick handlers)
+    // Navigate via sidebar menu using DOM click
     await page.evaluate((label) => {
       const clickById = (id) => {
         const el = document.getElementById(id);
@@ -52,6 +69,28 @@ async function exportPage(context, menuLabel, dateStart, outputPath) {
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
+    // Check if login modal appeared
+    const didLogin = await tryLoginIfModal(page);
+    if (didLogin) {
+      await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(5000);
+      await page.evaluate((label) => {
+        const clickById = (id) => {
+          const el = document.getElementById(id);
+          if (el) {
+            const a = el.closest('a') || el;
+            a.click();
+          }
+        };
+        clickById('Pendaftaran');
+        clickById('Report Pendaftaran');
+        const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
+        if (link) link.click();
+      }, menuLabel);
+      await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(3000);
+    }
+
     await page.evaluate(({ start }) => {
       const setVal = (id, val) => {
         const el = document.getElementById(id);
@@ -64,7 +103,7 @@ async function exportPage(context, menuLabel, dateStart, outputPath) {
       setVal('cDateStart', start);
     }, { start: dateStart });
 
-    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 10000 });
+    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 30000 });
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(2000);
 
