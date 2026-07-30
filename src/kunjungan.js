@@ -28,10 +28,13 @@ function parseExcelToJson(buffer) {
   }
 }
 
-async function exportPage(context, url, dateStart, outputPath) {
+async function exportPage(context, hash, dateStart, outputPath) {
   const page = await context.newPage();
   try {
-    await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2000);
+
+    await page.evaluate((h) => { window.location.hash = h; }, hash);
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
@@ -103,13 +106,13 @@ export async function processKunjungan(log, progress, context) {
 
       while (retries <= maxRetries && !success) {
         try {
-          const url = `${BASE}/#klinik/report/inforekapkunjungan/inforekapkunjungan`;
+          const hash = '#klinik/report/inforekapkunjungan/inforekapkunjungan';
           const dirName = path.join(OUTPUT_DIR, 'kunjungan', String(year));
           ensureDir(dirName);
           const dateKey = formatFileDate(year, month, day);
           const outputPath = path.join(dirName, `${APP_TARGET}_${dateKey}.xlsx`);
 
-          const result = await exportPage(context, url, dateStr, outputPath);
+          const result = await exportPage(context, hash, dateStr, outputPath);
 
           if (result.searchFailed) {
             log.warn(`  ${label}  Search: ${result.searchError}`);

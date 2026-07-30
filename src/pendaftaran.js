@@ -28,10 +28,13 @@ function parseExcelToJson(buffer) {
   }
 }
 
-async function exportPage(context, url, dateStart, dateEnd, outputPath) {
+async function exportPage(context, hash, dateStart, dateEnd, outputPath) {
   const page = await context.newPage();
   try {
-    await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2000);
+
+    await page.evaluate((h) => { window.location.hash = h; }, hash);
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
@@ -75,12 +78,12 @@ export async function fetchPendaftaran(year, month, context) {
   const dateStart = formatDateDMY(year, month, 1);
   const dateEnd = formatDateDMY(year, month, lastDay);
 
-  const url = `${BASE}/#klinik/report/infodaftarharian/infodaftarharian`;
+  const hash = '#klinik/report/infodaftarharian/infodaftarharian';
   const dirName = path.join(OUTPUT_DIR, 'pendaftaran', String(year));
   ensureDir(dirName);
   const outputPath = path.join(dirName, `${APP_TARGET}_${formatFileDate(year, month)}.xlsx`);
 
-  const result = await exportPage(context, url, dateStart, dateEnd, outputPath);
+  const result = await exportPage(context, hash, dateStart, dateEnd, outputPath);
 
   if (result.searchFailed) {
     return { buffer: null, status: 401, dateStart, dateEnd, searchFailed: true, searchError: result.searchError };
