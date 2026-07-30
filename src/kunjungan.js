@@ -73,10 +73,20 @@ export async function fetchKunjungan(year, month, day) {
   if (a) headers['Authorization'] = `Bearer ${a}`;
 
   // Step 1: POST search to populate server session
-  await http.post('/sc.core.php', kunjunganSearchPayload(dateStr), {
+  const searchRes = await http.post('/sc.core.php', kunjunganSearchPayload(dateStr), {
     headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
+    responseType: 'text',
   });
+  {
+    const body = searchRes.data || '';
+    const head = body.slice(0, 300);
+    console.error(`  [search] HTTP ${searchRes.status} | ${head.includes('<') ? 'HTML' : 'JSON/' + typeof body} | ${head.replace(/\s+/g, ' ').trim().slice(0, 200)}`);
+    if (looksLikeHTML(Buffer.from(body))) {
+      const h = summarizeHtml(Buffer.from(body));
+      if (h.hasLogin) return { buffer: null, status: 401, dateStr, url: '/sc.core.php', searchFailed: true, searchError: 'Session expired' };
+    }
+  }
 
   // Step 2: export Excel
   const exportParams = `scRpt=klinik/report/inforekapkunjungan/inforekapkunjungan&cidLayanan=&cDateStart=${dateStr}&cidDiagnosa=&cJnsKelamin=`;
@@ -132,9 +142,20 @@ export async function processKunjungan(log, progress) {
 
       while (retries <= maxRetries && !success) {
         try {
-          const { buffer, status, url } = await fetchKunjungan(year, month, day);
+          const result = await fetchKunjungan(year, month, day);
+          const { buffer, status, url } = result;
           const base = ENDPOINT_URL.replace(/\/+$/, '');
           log.clickableUrl(decodeURIComponent(base + url), base + url);
+
+          if (result.searchFailed) {
+            log.warn(`  ${label}  Search: ${result.searchError}`);
+            retries++;
+            if (retries <= maxRetries) {
+              log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
+              await new Promise(r => setTimeout(r, 30000));
+            }
+            continue;
+          }
 
           if (looksLikeHTML(buffer)) {
             const summary = summarizeHtml(buffer);

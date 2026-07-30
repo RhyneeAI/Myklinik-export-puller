@@ -76,10 +76,21 @@ export async function fetchPendaftaran(year, month) {
   if (a) headers['Authorization'] = `Bearer ${a}`;
 
   // Step 1: POST search to populate server session
-  await http.post('/sc.core.php', pendaftaranSearchPayload(dateStart, dateEnd), {
+  const searchRes = await http.post('/sc.core.php', pendaftaranSearchPayload(dateStart, dateEnd), {
     headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
+    responseType: 'text',
   });
+  {
+    const body = searchRes.data || '';
+    const head = body.slice(0, 300);
+    // Log search response for debugging
+    console.error(`  [search] HTTP ${searchRes.status} | ${head.includes('<') ? 'HTML' : 'JSON/' + typeof body} | ${head.replace(/\s+/g, ' ').trim().slice(0, 200)}`);
+    if (looksLikeHTML(Buffer.from(body))) {
+      const h = summarizeHtml(Buffer.from(body));
+      if (h.hasLogin) return { buffer: null, status: 401, dateStart, dateEnd, url: '/sc.core.php', searchFailed: true, searchError: 'Session expired' };
+    }
+  }
 
   // Step 2: export Excel
   const params = `scRpt=klinik/report/infodaftarharian/infodaftarharian&cIdJaminan=&cidLayanan=&cDateStart=${dateStart}&cDateEnd=${dateEnd}`;
@@ -132,9 +143,20 @@ export async function processPendaftaran(log, progress) {
 
     while (retries <= maxRetries && !success) {
       try {
-        const { buffer, status, url } = await fetchPendaftaran(year, month);
+        const result = await fetchPendaftaran(year, month);
+        const { buffer, status, url } = result;
         const base = ENDPOINT_URL.replace(/\/+$/, '');
         log.clickableUrl(decodeURIComponent(base + url), base + url);
+
+        if (result.searchFailed) {
+          log.tableRow([period, red(result.searchError || 'FAIL'), dim('-'), dim(url)]);
+          retries++;
+          if (retries <= maxRetries) {
+            log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
+            await new Promise(r => setTimeout(r, 30000));
+          }
+          continue;
+        }
 
         if (looksLikeHTML(buffer)) {
           const summary = summarizeHtml(buffer);
