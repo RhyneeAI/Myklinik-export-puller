@@ -133,11 +133,11 @@ async function main() {
 
   log.section('Step 1: Authentication');
 
-  log.step('\u25B6', 'Setting cookies...');
+  log.step('Setting cookies...');
   const cookies = await setCookies();
   log.success(`${cookies.length} cookies set`);
 
-  log.step('\u25B6', 'Testing connection...');
+  log.step('Testing connection...');
   const authResult = await testAuth();
   if (!authResult.ok) {
     log.error(`Auth failed: ${authResult.reason}`);
@@ -207,19 +207,15 @@ async function main() {
     MODE !== 'kunjungan' ? `Pendaftaran: ${totalPendaftaranMonths - missing.pendaftaranMissing.length}/${totalPendaftaranMonths} files` : null,
     MODE !== 'pendaftaran' ? `Kunjungan: remaining days check above` : null,
     missing.pendaftaranMissing.length === 0 && missing.kunjunganMissing.length === 0
-      ? `${GREEN}\u2714 All files verified${RESET}`
-      : `${YELLOW}\u26A0 Some files missing${RESET}`,
+      ? 'All files verified'
+      : 'Some files missing',
   ].filter(Boolean));
 
   log.success('All done!');
   log.footer();
 }
 
-const RESET = '\x1b[0m';
-const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-
 main().catch((err) => {
-  console.error(`\n  \x1b[31m\u2716 Fatal: ${err.message || err}\x1b[0m\n`);
+  console.error(`\n  Error: ${err.message || err}\n`);
   process.exit(1);
 });
