@@ -28,31 +28,12 @@ function parseExcelToJson(buffer) {
   }
 }
 
-async function navigateToReport(page, menuLabel) {
-  const ensureOpen = async (id) => {
-    const isOpen = await page.evaluate((i) => {
-      const el = document.getElementById(i);
-      return el?.closest('li')?.classList.contains('open') || false;
-    }, id);
-    if (!isOpen) {
-      await page.click(`[id="${id}"]`);
-      await page.waitForTimeout(400);
-    }
-  };
-  await ensureOpen('Pendaftaran');
-  await ensureOpen('Report Pendaftaran');
-  await page.click(`a[href="#klinik/report/${menuLabel}/${menuLabel}"]`);
-  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-  await page.waitForTimeout(2000);
-}
-
 async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
   const page = await context.newPage();
   try {
-    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(2000);
-
-    await navigateToReport(page, menuLabel);
+    await page.goto(`${BASE}/#klinik/report/${menuLabel}/${menuLabel}`, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(3000);
 
     await page.evaluate(({ start, end }) => {
       const setVal = (id, val) => {

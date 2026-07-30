@@ -28,14 +28,26 @@ function parseCookies() {
     } catch {}
   }
 
-  add('SERVERID', process.env.SERVERID);
+  add('SERVERID', process.env.SERVERID || process.env.SERVEID);
   add('SOKKACREATIVEID', process.env.SOKKACREATIVEID);
   add('token', process.env.TOKEN);
-  add(process.env.SESSION_NAME, process.env.SESSION_VALUE);
   add('key1', process.env.KEY1);
   add('key2', process.env.KEY2);
   add('key3', process.env.KEY3);
   add('key4', process.env.KEY4);
+
+  // PHP session cookie via SESSION_NAME + SESSION_VALUE
+  if (process.env.SESSION_NAME && process.env.SESSION_VALUE) {
+    add(process.env.SESSION_NAME, process.env.SESSION_VALUE);
+  } else {
+    // fallback: scan env vars for long random-looking names (PHP session ID pattern)
+    for (const key of Object.keys(process.env)) {
+      if (/^[a-zA-Z0-9]{20,30}$/.test(key) && key !== key.toUpperCase()) {
+        add(key, process.env[key]);
+        break;
+      }
+    }
+  }
 
   return c;
 }
@@ -44,11 +56,26 @@ async function autoLogin(ctx, attempt) {
   const page = await ctx.newPage();
   try {
     await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+    // Wait longer for SPA to dynamically load login form
+    for (let w = 0; w < 15; w++) {
+      await page.waitForTimeout(1000);
+      if (await page.$('#ckeyKlinik')) break;
+    }
 
     const currentUrl = page.url();
-    const hasForm = await page.$('#ckeyKlinik');
+    let hasForm = await page.$('#ckeyKlinik');
+
+    // If still not found, try navigating to common login paths
+    if (!hasForm) {
+      for (const path of ['/login', '/auth/login', '/klinik/', '/index.php']) {
+        try {
+          await page.goto(BASE + path, { waitUntil: 'load', timeout: 15000 });
+          await page.waitForTimeout(3000);
+          hasForm = await page.$('#ckeyKlinik');
+          if (hasForm) break;
+        } catch {}
+      }
+    }
 
     if (!hasForm) {
       const outputDir = process.env.OUTPUT_DIR || 'output';
@@ -57,7 +84,7 @@ async function autoLogin(ctx, attempt) {
       await page.screenshot({ path: path.join(debugDir, `login-attempt-${attempt}.png`) });
       const html = await page.content();
       fs.writeFileSync(path.join(debugDir, `login-attempt-${attempt}.html`), html, 'utf-8');
-      throw new Error(`Login form not found at ${currentUrl} — ${hasForm === null ? 'no element' : 'element null'}`);
+      throw new Error(`Login form not found`);
     }
 
     const captcha = (await page.textContent('#captcha')).trim();
