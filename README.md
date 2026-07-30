@@ -4,7 +4,7 @@ CLI-based Node.js application untuk menarik data **Pendaftaran** dan **Kunjungan
 
 ## Fitur
 
-- **Cookie-based auth** — menggunakan cookie dari browser (SERVEID, SOKKACREATIVEID, token)
+- **Playwright automation** — navigasi SPA, klik tombol Cari & Export otomatis
 - **Pendaftaran** — tarik data per-bulan (rekursif dari START\_DATE hingga END\_DATE)
 - **Kunjungan** — tarik data per-hari + merge otomatis ke file bulanan
 - **Output ganda** — Excel (.xlsx) + JSON (.json) untuk setiap periode
@@ -17,6 +17,7 @@ CLI-based Node.js application untuk menarik data **Pendaftaran** dan **Kunjungan
 
 - Node.js 18+
 - npm
+- Google Chrome (terinstall di system)
 
 ## Instalasi
 
@@ -44,17 +45,21 @@ cp .env.example .env
 | `MODE` | Jenis data: `pendaftaran`, `kunjungan`, atau `all` | `all` |
 | `REQUEST_DELAY_MS` | Jeda antar request (ms) | `15000` |
 | `MAX_RETRIES` | Maksimal percobaan ulang per request | `3` |
-| `SERVEID` | Cookie SERVEID dari browser | |
-| `SOKKACREATIVEID` | Cookie SOKKACREATIVEID dari browser | |
-| `TOKEN` | Cookie token dari browser | |
+| `COOKIES_JSON` | Semua cookies sebagai JSON (dari DevTools → Copy as JSON) | |
+| `SERVERID` | Cookie SERVERID | |
+| `SOKKACREATIVEID` | Cookie SOKKACREATIVEID | |
+| `TOKEN` | Cookie token | |
+| `SESSION_NAME` | Nama cookie session PHP (acak) | |
+| `SESSION_VALUE` | Value cookie session PHP | |
+| `KEY1` – `KEY4` | Cookie autentikasi | |
 
 ### Mendapatkan Cookie
 
 1. Buka `https://apps.myklinik.id/` di browser
 2. Login seperti biasa
 3. Buka Developer Tools (F12) → tab **Application** → **Cookies** → `apps.myklinik.id`
-4. Copy nilai `SERVEID`, `SOKKACREATIVEID`, dan `token`
-5. Paste ke `.env`
+4. Klik kanan di tabel cookies → **Copy All** → **Copy as JSON**, paste ke `COOKIES_JSON` di `.env`
+   Atau copy manual nilai masing-masing cookie ke variable individu (`SERVERID`, `SOKKACREATIVEID`, `TOKEN`, `SESSION_NAME`, `SESSION_VALUE`, `KEY1`–`KEY4`)
 
 ## Penggunaan
 

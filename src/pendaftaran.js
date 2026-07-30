@@ -1,23 +1,20 @@
 import fs from 'fs';
 import path from 'path';
 import XLSX from 'xlsx';
-import { http } from './httpClient.js';
-import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay } from './utils.js';
+import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay, sleep } from './utils.js';
 import { updatePendaftaranProgress } from './progress.js';
 import { dim, green, yellow, red } from './logger.js';
-import { getCsrfToken } from './auth.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR || 'output';
 const APP_TARGET = process.env.APP_TARGET || 'Export';
-const ENDPOINT_URL = process.env.ENDPOINT_URL || '';
+const ENDPOINT_URL = process.env.ENDPOINT_URL || 'https://apps.myklinik.id';
+const BASE = ENDPOINT_URL.replace(/\/+$/, '');
 
 function ensureDir(dir) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 function parseExcelToJson(buffer) {
@@ -31,78 +28,68 @@ function parseExcelToJson(buffer) {
   }
 }
 
-function pendaftaranSearchPayload(dateStart, dateEnd) {
-  const s = new URLSearchParams();
-  s.append('cPar', './pages/klinik/report/infodaftarharian/add.ajax.php');
-  s.append('cFunction', 'GetListDaftar');
-  s.append('cData[draw]', '1');
-  s.append('cData[start]', '0');
-  s.append('cData[length]', '-1');
-  s.append('cData[dateStart]', dateStart);
-  s.append('cData[dateEnd]', dateEnd);
-  s.append('cData[idJaminan]', '');
-  s.append('cData[idLayanan]', '');
-  for (const i of Array.from({ length: 17 }, (_, i) => i)) {
-    s.append(`cData[columns][${i}][data]`, String(i));
-    s.append(`cData[columns][${i}][name]`, '');
-    s.append(`cData[columns][${i}][searchable]`, 'true');
-    s.append(`cData[columns][${i}][orderable]`, 'false');
-    s.append(`cData[columns][${i}][search][value]`, '');
-    s.append(`cData[columns][${i}][search][regex]`, 'false');
+async function exportPage(context, url, dateStart, dateEnd, outputPath) {
+  const page = await context.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+
+    await page.evaluate(({ start, end }) => {
+      const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.removeAttribute('readonly');
+        el.value = val;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      setVal('cDateStart', start);
+      if (end) setVal('cDateEnd', end);
+    }, { start: dateStart, end: dateEnd });
+
+    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 10000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 30000 }),
+      page.click('#btn-export, button:has-text("Export Excel")', { timeout: 10000 }),
+    ]);
+
+    await download.saveAs(outputPath);
+
+    const buffer = fs.readFileSync(outputPath);
+    return { buffer, page };
+  } catch (err) {
+    const currentUrl = page.url();
+    if (currentUrl.includes('/login')) {
+      return { buffer: null, page, searchError: 'Session expired', searchFailed: true };
+    }
+    throw err;
   }
-  s.append('cData[order][0][column]', '0');
-  s.append('cData[order][0][dir]', 'asc');
-  s.append('cData[search][value]', '');
-  s.append('cData[search][regex]', 'false');
-  return s.toString();
 }
 
-export async function fetchPendaftaran(year, month) {
+export async function fetchPendaftaran(year, month, context) {
   const lastDay = getDaysInMonth(year, month);
   const dateStart = formatDateDMY(year, month, 1);
   const dateEnd = formatDateDMY(year, month, lastDay);
 
-  const base = ENDPOINT_URL.replace(/\/+$/, '');
+  const url = `${BASE}/#klinik/report/infodaftarharian/infodaftarharian`;
+  const dirName = path.join(OUTPUT_DIR, 'pendaftaran', String(year));
+  ensureDir(dirName);
+  const outputPath = path.join(dirName, `${APP_TARGET}_${formatFileDate(year, month)}.xlsx`);
 
-  const headers = {
-    Accept: '*/*',
-    Referer: base + '/#klinik/report/infodaftarharian/infodaftarharian',
-    'X-Requested-With': 'XMLHttpRequest',
-    'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-  };
-  const t = getCsrfToken();
-  if (t) headers['X-CSRF-TOKEN'] = t;
+  const result = await exportPage(context, url, dateStart, dateEnd, outputPath);
 
-  // Step 1: POST search to populate server session
-  const searchRes = await http.post('/sc.core.php', pendaftaranSearchPayload(dateStart, dateEnd), {
-    headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
-    validateStatus: () => true,
-    responseType: 'text',
-  });
-  {
-    const body = searchRes.data || '';
-    const head = body.slice(0, 300);
-    // Log search response for debugging
-    console.error(`  [search] HTTP ${searchRes.status} | ${head.includes('<') ? 'HTML' : 'JSON/' + typeof body} | ${head.replace(/\s+/g, ' ').trim().slice(0, 200)}`);
-    if (looksLikeHTML(Buffer.from(body))) {
-      const h = summarizeHtml(Buffer.from(body));
-      if (h.hasLogin) return { buffer: null, status: 401, dateStart, dateEnd, url: '/sc.core.php', searchFailed: true, searchError: 'Session expired' };
-    }
+  if (result.searchFailed) {
+    return { buffer: null, status: 401, dateStart, dateEnd, searchFailed: true, searchError: result.searchError };
   }
 
-  // Step 2: export Excel
-  const params = `scRpt=klinik/report/infodaftarharian/infodaftarharian&cIdJaminan=&cidLayanan=&cDateStart=${dateStart}&cDateEnd=${dateEnd}`;
-  const url = `/sc.excelme.php?${params}`;
-  const res = await http.get(url, {
-    responseType: 'arraybuffer',
-    headers: { ...headers, Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*' },
-    validateStatus: () => true,
-  });
-
-  return { buffer: res.data, status: res.status, dateStart, dateEnd, url };
+  return { buffer: result.buffer, status: 200, dateStart, dateEnd };
 }
 
-export async function processPendaftaran(log, progress) {
+export async function processPendaftaran(log, progress, context) {
   const { start, end } = progress;
 
   let totalFiles = 0;
@@ -119,7 +106,6 @@ export async function processPendaftaran(log, progress) {
 
   while (year > end.year || (year === end.year && month >= end.month)) {
     const period = `${year}-${String(month).padStart(2, '0')}`;
-    const label = period.replace('-', '_');
     const dateKey = formatFileDate(year, month);
     const fname = `${APP_TARGET}_${dateKey}.xlsx`;
 
@@ -141,17 +127,15 @@ export async function processPendaftaran(log, progress) {
 
     while (retries <= maxRetries && !success) {
       try {
-        const result = await fetchPendaftaran(year, month);
-        const { buffer, status, url } = result;
-        const base = ENDPOINT_URL.replace(/\/+$/, '');
-        log.clickableUrl(decodeURIComponent(base + url), base + url);
+        const result = await fetchPendaftaran(year, month, context);
+        const { buffer, status } = result;
 
         if (result.searchFailed) {
-          log.tableRow([period, red(result.searchError || 'FAIL'), dim('-'), dim(url)]);
+          log.tableRow([period, red(result.searchError || 'FAIL'), dim('-'), dim('search')]);
           retries++;
           if (retries <= maxRetries) {
             log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
-            await new Promise(r => setTimeout(r, 30000));
+            await sleep(30000);
           }
           continue;
         }
@@ -167,7 +151,7 @@ export async function processPendaftaran(log, progress) {
           retries++;
           if (retries <= maxRetries) {
             log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
-            await new Promise(r => setTimeout(r, 30000));
+            await sleep(30000);
           }
           continue;
         }
@@ -181,8 +165,15 @@ export async function processPendaftaran(log, progress) {
         const excelName = `${APP_TARGET}_${dateKey}.xlsx`;
         const jsonName = `${APP_TARGET}_${dateKey}.json`;
 
-        fs.writeFileSync(path.join(dirName, excelName), buffer);
-        fs.writeFileSync(path.join(dirName, jsonName), JSON.stringify(jsonRows, null, 2), 'utf-8');
+        const excelPath = path.join(dirName, excelName);
+        const jsonPath = path.join(dirName, jsonName);
+
+        if (result.outputPath && fs.existsSync(result.outputPath)) {
+          fs.copyFileSync(result.outputPath, excelPath);
+        } else {
+          fs.writeFileSync(excelPath, buffer);
+        }
+        fs.writeFileSync(jsonPath, JSON.stringify(jsonRows, null, 2), 'utf-8');
 
         updatePendaftaranProgress(year, month);
 
@@ -195,7 +186,7 @@ export async function processPendaftaran(log, progress) {
         retries++;
         if (retries <= maxRetries) {
           log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
-          await new Promise(r => setTimeout(r, 30000));
+          await sleep(30000);
         }
       }
     }

@@ -1,22 +1,20 @@
 import fs from 'fs';
 import path from 'path';
 import XLSX from 'xlsx';
-import { http } from './httpClient.js';
-import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay } from './utils.js';
+import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay, sleep } from './utils.js';
 import { updateKunjunganProgress } from './progress.js';
-import { getCsrfToken } from './auth.js';
+import { dim, green, yellow, red } from './logger.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR || 'output';
 const APP_TARGET = process.env.APP_TARGET || 'Export';
-const ENDPOINT_URL = process.env.ENDPOINT_URL || '';
+const ENDPOINT_URL = process.env.ENDPOINT_URL || 'https://apps.myklinik.id';
+const BASE = ENDPOINT_URL.replace(/\/+$/, '');
 
 function ensureDir(dir) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 function parseExcelToJson(buffer) {
@@ -30,89 +28,53 @@ function parseExcelToJson(buffer) {
   }
 }
 
-function kunjunganSearchPayload(dateStr) {
-  const s = new URLSearchParams();
-  s.append('cPar', './pages/klinik/report/inforekapkunjungan/add.ajax.php');
-  s.append('cFunction', 'GetListKunjungan');
-  s.append('cData[draw]', '1');
-  s.append('cData[start]', '0');
-  s.append('cData[length]', '-1');
-  s.append('cData[dateStart]', dateStr);
-  s.append('cData[idLayanan]', '');
-  s.append('cData[iddiagnosa]', '');
-  s.append('cData[idJnsKel]', '');
-  for (const i of Array.from({ length: 24 }, (_, i) => i)) {
-    s.append(`cData[columns][${i}][data]`, String(i));
-    s.append(`cData[columns][${i}][name]`, '');
-    s.append(`cData[columns][${i}][searchable]`, 'true');
-    s.append(`cData[columns][${i}][orderable]`, 'false');
-    s.append(`cData[columns][${i}][search][value]`, '');
-    s.append(`cData[columns][${i}][search][regex]`, 'false');
-  }
-  s.append('cData[order][0][column]', '0');
-  s.append('cData[order][0][dir]', 'asc');
-  s.append('cData[search][value]', '');
-  s.append('cData[search][regex]', 'false');
-  return s.toString();
-}
+async function exportPage(context, url, dateStart, outputPath) {
+  const page = await context.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(3000);
 
-export async function fetchKunjungan(year, month, day) {
-  const dateStr = formatDateDMY(year, month, day);
+    await page.evaluate(({ start }) => {
+      const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.removeAttribute('readonly');
+        el.value = val;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      setVal('cDateStart', start);
+    }, { start: dateStart });
 
-  const base = ENDPOINT_URL.replace(/\/+$/, '');
+    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 10000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(2000);
 
-  const headers = {
-    Accept: '*/*',
-    Referer: base + '/#klinik/report/inforekapkunjungan/inforekapkunjungan',
-    'X-Requested-With': 'XMLHttpRequest',
-    'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-  };
-  const t = getCsrfToken();
-  if (t) headers['X-CSRF-TOKEN'] = t;
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 30000 }),
+      page.click('#btn-export, button:has-text("Export Excel")', { timeout: 10000 }),
+    ]);
 
-  // Step 1: POST search to populate server session
-  const searchRes = await http.post('/sc.core.php', kunjunganSearchPayload(dateStr), {
-    headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
-    validateStatus: () => true,
-    responseType: 'text',
-  });
-  {
-    const body = searchRes.data || '';
-    const head = body.slice(0, 300);
-    console.error(`  [search] HTTP ${searchRes.status} | ${head.includes('<') ? 'HTML' : 'JSON/' + typeof body} | ${head.replace(/\s+/g, ' ').trim().slice(0, 200)}`);
-    if (looksLikeHTML(Buffer.from(body))) {
-      const h = summarizeHtml(Buffer.from(body));
-      if (h.hasLogin) return { buffer: null, status: 401, dateStr, url: '/sc.core.php', searchFailed: true, searchError: 'Session expired' };
+    await download.saveAs(outputPath);
+
+    const buffer = fs.readFileSync(outputPath);
+    return { buffer, page };
+  } catch (err) {
+    const currentUrl = page.url();
+    if (currentUrl.includes('/login')) {
+      return { buffer: null, page, searchError: 'Session expired', searchFailed: true };
     }
+    throw err;
   }
-
-  // Step 2: export Excel
-  const exportParams = `scRpt=klinik/report/inforekapkunjungan/inforekapkunjungan&cidLayanan=&cDateStart=${dateStr}&cidDiagnosa=&cJnsKelamin=`;
-  const url = `/sc.excelme.php?${exportParams}`;
-
-  const exportHeaders = {
-    ...headers,
-    Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
-  };
-
-  const res = await http.get(url, {
-    responseType: 'arraybuffer',
-    headers: exportHeaders,
-    validateStatus: () => true,
-  });
-
-  return { buffer: res.data, status: res.status, dateStr, url };
 }
 
 function shouldSkipDate(cursor, year, month, day) {
   if (!cursor) return false;
-  if (cursor.year === year && cursor.month === month && day <= cursor.day) {
-    return true;
-  }
-  return false;
+  return cursor.year === year && cursor.month === month && day <= cursor.day;
 }
 
-export async function processKunjungan(log, progress) {
+export async function processKunjungan(log, progress, context) {
   const { start, end } = progress;
 
   let totalFiles = 0;
@@ -127,6 +89,7 @@ export async function processKunjungan(log, progress) {
 
     for (let day = 1; day <= daysInMonth; day++) {
       const label = `${year}_${String(month).padStart(2, '0')}_${String(day).padStart(2, '0')}`;
+      const dateStr = formatDateDMY(year, month, day);
 
       const cursor = progress.kunjungan.cursor;
       if (shouldSkipDate(cursor, year, month, day)) {
@@ -140,52 +103,45 @@ export async function processKunjungan(log, progress) {
 
       while (retries <= maxRetries && !success) {
         try {
-          const result = await fetchKunjungan(year, month, day);
-          const { buffer, status, url } = result;
-          const base = ENDPOINT_URL.replace(/\/+$/, '');
-          log.clickableUrl(decodeURIComponent(base + url), base + url);
+          const url = `${BASE}/#klinik/report/inforekapkunjungan/inforekapkunjungan`;
+          const dirName = path.join(OUTPUT_DIR, 'kunjungan', String(year));
+          ensureDir(dirName);
+          const dateKey = formatFileDate(year, month, day);
+          const outputPath = path.join(dirName, `${APP_TARGET}_${dateKey}.xlsx`);
+
+          const result = await exportPage(context, url, dateStr, outputPath);
 
           if (result.searchFailed) {
             log.warn(`  ${label}  Search: ${result.searchError}`);
             retries++;
             if (retries <= maxRetries) {
               log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
-              await new Promise(r => setTimeout(r, 30000));
+              await sleep(30000);
             }
             continue;
           }
 
-          if (looksLikeHTML(buffer)) {
-            const summary = summarizeHtml(buffer);
+          if (looksLikeHTML(result.buffer)) {
+            const summary = summarizeHtml(result.buffer);
             if (summary.hasLogin) {
               log.error(`  ${label}  Session expired!`);
               return { interrupted: true, reason: 'Session expired' };
             }
-            log.warn(`  ${label}  Got HTML (HTTP ${status}) ${summary.title ? `- ${summary.title}` : ''}`);
+            log.warn(`  ${label}  Got HTML (HTTP 200) ${summary.title ? `- ${summary.title}` : ''}`);
             retries++;
             if (retries <= maxRetries) {
               log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
-              await new Promise(r => setTimeout(r, 30000));
+              await sleep(30000);
             }
             continue;
           }
 
-          const jsonRows = parseExcelToJson(buffer);
+          const jsonRows = parseExcelToJson(result.buffer);
           const rowCount = jsonRows.length;
-
-          const dirName = path.join(OUTPUT_DIR, 'kunjungan', String(year));
-          ensureDir(dirName);
-
-          const dateKey = formatFileDate(year, month, day);
-          const excelName = `${APP_TARGET}_${dateKey}.xlsx`;
-          const jsonName = `${APP_TARGET}_${dateKey}.json`;
-
-          fs.writeFileSync(path.join(dirName, excelName), buffer);
-          fs.writeFileSync(path.join(dirName, jsonName), JSON.stringify(jsonRows, null, 2), 'utf-8');
 
           updateKunjunganProgress(year, month, day);
 
-          log.data(`  ${label}`, 'SAVED', `${rowCount} rows`);
+          log.data(label, 'SAVED', `${rowCount} rows`);
           totalFiles++;
           totalRows += rowCount;
 
@@ -198,7 +154,7 @@ export async function processKunjungan(log, progress) {
           retries++;
           if (retries <= maxRetries) {
             log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
-            await new Promise(r => setTimeout(r, 30000));
+            await sleep(30000);
           }
         }
 

@@ -1,8 +1,8 @@
 import dotenv from 'dotenv';
-import { setCookies, testAuth, initSession } from './auth.js';
+import { launch, createContext, close } from './browser.js';
 import { createLogger } from './logger.js';
-import { parseDateRange, generateMonthlyRange, getDaysInMonth } from './utils.js';
-import { loadProgress, saveProgress } from './progress.js';
+import { parseDateRange, getDaysInMonth } from './utils.js';
+import { loadProgress } from './progress.js';
 import { processPendaftaran } from './pendaftaran.js';
 import { processKunjungan } from './kunjungan.js';
 import fs from 'fs';
@@ -131,24 +131,16 @@ async function main() {
     log.info(`Kunjungan: ~${totalKunjunganDays} days to process`);
   }
 
-  log.section('Step 1: Authentication');
+  log.section('Step 1: Launch Browser');
 
-  log.step('Setting cookies...');
-  const cookies = await setCookies();
-  log.success(`${cookies.length} cookies set`);
-
-  log.step('Testing connection...');
-  const authResult = await testAuth();
-  if (!authResult.ok) {
-    log.error(`Auth failed: ${authResult.reason}`);
+  log.step('Starting Chrome...');
+  const context = await createContext().catch(async (err) => {
+    log.error(`Failed to launch browser: ${err.message}`);
+    log.info('Make sure Google Chrome is installed');
     log.footer();
     process.exit(1);
-  }
-  log.success(authResult.reason);
-
-  log.step('Initializing session...');
-  await initSession();
-  log.success('Session initialized');
+  });
+  log.success('Browser ready');
 
   let progress = loadProgress();
 
@@ -166,10 +158,11 @@ async function main() {
       start,
       end,
       pendaftaran: progress.pendaftaran,
-    });
+    }, context);
 
     if (pendResult.interrupted) {
       log.error(`Pendaftaran interrupted: ${pendResult.reason}`);
+      await close();
       log.footer();
       process.exit(1);
     }
@@ -193,10 +186,11 @@ async function main() {
       start,
       end,
       kunjungan: progress.kunjungan,
-    });
+    }, context);
 
     if (kunjResult.interrupted) {
       log.error(`Kunjungan interrupted: ${kunjResult.reason}`);
+      await close();
       log.footer();
       process.exit(1);
     }
@@ -217,9 +211,12 @@ async function main() {
 
   log.success('All done!');
   log.footer();
+
+  await close();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(`\n  Error: ${err.message || err}\n`);
+  await close().catch(() => {});
   process.exit(1);
 });
