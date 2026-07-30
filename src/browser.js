@@ -47,12 +47,56 @@ export async function launch() {
   return browser;
 }
 
+async function autoLogin(ctx) {
+  const page = await ctx.newPage();
+  try {
+    await page.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.waitForSelector('#ckeyKlinik', { timeout: 15000 });
+
+    const captcha = (await page.textContent('#captcha')).trim();
+
+    await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
+    await page.fill('#cUser', process.env.LOGIN_USER);
+    await page.fill('#cPassword', process.env.LOGIN_PASS);
+    await page.fill('#cCaptcha', captcha);
+
+    await page.click('#btnSubmit');
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+
+    const currentUrl = page.url();
+    if (currentUrl.includes('/login') || currentUrl === BASE + '/' || currentUrl === BASE) {
+      throw new Error('Login failed - returned to login page');
+    }
+
+    return true;
+  } finally {
+    await page.close();
+  }
+}
+
 export async function createContext() {
   const b = await launch();
   const ctx = await b.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
     locale: 'id-ID',
   });
+
+  const hasLoginCreds = process.env.LOGIN_KEY && process.env.LOGIN_USER && process.env.LOGIN_PASS;
+  if (hasLoginCreds) {
+    const maxAttempts = 3;
+    let lastErr;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        await autoLogin(ctx);
+        return ctx;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw new Error(`Login failed after ${maxAttempts} attempts: ${lastErr ? lastErr.message : ''}`);
+  }
+
   const cookies = parseCookies();
   if (cookies.length > 0) await ctx.addCookies(cookies);
   return ctx;
