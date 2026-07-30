@@ -5,7 +5,7 @@ import { http } from './httpClient.js';
 import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay } from './utils.js';
 import { updatePendaftaranProgress } from './progress.js';
 import { dim, green, yellow, red } from './logger.js';
-import { getCsrfToken } from './auth.js';
+import { getCsrfToken, getAuthToken } from './auth.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -42,9 +42,13 @@ export async function fetchPendaftaran(year, month) {
   const headers = {
     Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
     Referer: ENDPOINT_URL.replace(/\/+$/, '') + '/#klinik/report/infodaftarharian/infodaftarharian',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
   };
   const t = getCsrfToken();
   if (t) headers['X-CSRF-TOKEN'] = t;
+  const a = getAuthToken();
+  if (a) headers['Authorization'] = `Bearer ${a}`;
 
   const res = await http.get(url, {
     responseType: 'arraybuffer',

@@ -8,6 +8,7 @@ dotenv.config();
 const { ENDPOINT_URL, SERVEID, SOKKACREATIVEID, TOKEN, OUTPUT_DIR } = process.env;
 
 let csrfToken = '';
+let authToken = TOKEN || '';
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -15,6 +16,10 @@ function ensureDir(dir) {
 
 export function getCsrfToken() {
   return csrfToken;
+}
+
+export function getAuthToken() {
+  return authToken;
 }
 
 export async function setCookies() {
