@@ -64,7 +64,6 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
       await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(2000);
 
-      // Re-navigate menu after login
       await page.evaluate((label) => {
         const clickById = (id) => {
           const el = document.getElementById(id);
@@ -103,13 +102,15 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
     await download.saveAs(outputPath);
 
     const buffer = fs.readFileSync(outputPath);
-    return { buffer, page };
+    return { buffer, status: 200, dateStart, dateEnd };
   } catch (err) {
-    const currentUrl = page.url();
-    if (currentUrl.includes('/login')) {
-      return { buffer: null, page, searchError: 'Session expired', searchFailed: true };
+    const url = page.url();
+    if (url.includes('/login')) {
+      return { buffer: null, searchError: 'Session expired', searchFailed: true };
     }
     throw err;
+  } finally {
+    await page.close().catch(() => {});
   }
 }
 
