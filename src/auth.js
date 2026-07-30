@@ -56,3 +56,15 @@ export async function testAuth() {
 
   return { ok: false, reason: `Unexpected response: HTTP ${res.status}` };
 }
+
+export async function initSession() {
+  const base = ENDPOINT_URL.replace(/\/+$/, '');
+  await http.get('/#klinik/report/infodaftarharian/infodaftarharian', {
+    headers: { Accept: 'text/html,application/xhtml+xml' },
+    validateStatus: () => true,
+  });
+  await http.get('/#klinik/report/inforekapkunjungan/inforekapkunjungan', {
+    headers: { Accept: 'text/html,application/xhtml+xml' },
+    validateStatus: () => true,
+  });
+}

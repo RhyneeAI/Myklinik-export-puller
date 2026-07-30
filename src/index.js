@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { setCookies, testAuth } from './auth.js';
+import { setCookies, testAuth, initSession } from './auth.js';
 import { createLogger } from './logger.js';
 import { parseDateRange, generateMonthlyRange, getDaysInMonth } from './utils.js';
 import { loadProgress, saveProgress } from './progress.js';
@@ -145,6 +145,10 @@ async function main() {
     process.exit(1);
   }
   log.success(authResult.reason);
+
+  log.step('Initializing session...');
+  await initSession();
+  log.success('Session initialized');
 
   let progress = loadProgress();
 

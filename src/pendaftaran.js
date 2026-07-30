@@ -35,20 +35,14 @@ export async function fetchPendaftaran(year, month) {
   const dateStart = formatDateDMY(year, month, 1);
   const dateEnd = formatDateDMY(year, month, lastDay);
 
-  const params = new URLSearchParams({
-    scRpt: 'klinik/report/infodaftarharian/infodaftarharian',
-    cIdJaminan: '',
-    cidLayanan: '',
-    cDateStart: dateStart,
-    cDateEnd: dateEnd,
-  });
-
-  const url = `/sc.excelme.php?${params.toString()}`;
+  const qs = `scRpt=klinik/report/infodaftarharian/infodaftarharian&cIdJaminan=&cidLayanan=&cDateStart=${dateStart}&cDateEnd=${dateEnd}`;
+  const url = `/sc.excelme.php?${qs}`;
 
   const res = await http.get(url, {
     responseType: 'arraybuffer',
     headers: {
       Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
+      Referer: ENDPOINT_URL.replace(/\/+$/, '') + '/#klinik/report/infodaftarharian/infodaftarharian',
     },
     validateStatus: () => true,
   });
@@ -97,7 +91,7 @@ export async function processPendaftaran(log, progress) {
       try {
         const { buffer, status, url } = await fetchPendaftaran(year, month);
         const base = ENDPOINT_URL.replace(/\/+$/, '');
-        console.log(`  ${dim(base + decodeURIComponent(url))}`);
+        log.clickableUrl(decodeURIComponent(base + url), base + url);
 
         if (looksLikeHTML(buffer)) {
           const summary = summarizeHtml(buffer);

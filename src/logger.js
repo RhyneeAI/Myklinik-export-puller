@@ -99,6 +99,13 @@ export function createLogger(projectName, version) {
     console.log(...args);
   }
 
+  function clickableUrl(metadata, fullUrl) {
+    const OSC8 = '\x1b]8;;';
+    const ST = '\x1b\\';
+    const label = metadata || fullUrl;
+    console.log(`  ${dim('\u2192')} ${OSC8}${fullUrl}${ST}${dim(label)}${ST}${OSC8}${ST}`);
+  }
+
   function startTable(columns) {
     _tableCols = columns.map(c => ({
       ...c,
@@ -145,7 +152,7 @@ export function createLogger(projectName, version) {
   return {
     header, section, divider, step, data,
     warn, error, info, success,
-    summary, footer, raw,
+    summary, footer, raw, clickableUrl,
     startTable, tableRow, endTable,
   };
 }

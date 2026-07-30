@@ -32,20 +32,14 @@ function parseExcelToJson(buffer) {
 export async function fetchKunjungan(year, month, day) {
   const dateStr = formatDateDMY(year, month, day);
 
-  const params = new URLSearchParams({
-    scRpt: 'klinik/report/inforekapkunjungan/inforekapkunjungan',
-    cidLayanan: '',
-    cDateStart: dateStr,
-    cidDiagnosa: '',
-    cJnsKelamin: '',
-  });
-
-  const url = `/sc.excelme.php?${params.toString()}`;
+  const qs = `scRpt=klinik/report/inforekapkunjungan/inforekapkunjungan&cidLayanan=&cDateStart=${dateStr}&cidDiagnosa=&cJnsKelamin=`;
+  const url = `/sc.excelme.php?${qs}`;
 
   const res = await http.get(url, {
     responseType: 'arraybuffer',
     headers: {
       Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
+      Referer: ENDPOINT_URL.replace(/\/+$/, '') + '/#klinik/report/inforekapkunjungan/inforekapkunjungan',
     },
     validateStatus: () => true,
   });
@@ -91,7 +85,7 @@ export async function processKunjungan(log, progress) {
         try {
           const { buffer, status, url } = await fetchKunjungan(year, month, day);
           const base = ENDPOINT_URL.replace(/\/+$/, '');
-          log.raw(`${base}${decodeURIComponent(url)}`);
+          log.clickableUrl(decodeURIComponent(base + url), base + url);
 
           if (looksLikeHTML(buffer)) {
             const summary = summarizeHtml(buffer);
