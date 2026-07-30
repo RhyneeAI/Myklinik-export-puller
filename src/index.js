@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { launch, createContext, close } from './browser.js';
+import { createContext, close } from './browser.js';
 import { createLogger } from './logger.js';
 import { parseDateRange, getDaysInMonth } from './utils.js';
 import { loadProgress } from './progress.js';

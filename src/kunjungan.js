@@ -29,14 +29,18 @@ function parseExcelToJson(buffer) {
 }
 
 async function navigateToReport(page, menuLabel) {
-  const parents = ['Pendaftaran', 'Report Pendaftaran'];
-  for (const p of parents) {
-    const isOpen = await page.$(`li.open a:has-text("${p}")`);
+  const ensureOpen = async (id) => {
+    const isOpen = await page.evaluate((i) => {
+      const el = document.getElementById(i);
+      return el?.closest('li')?.classList.contains('open') || false;
+    }, id);
     if (!isOpen) {
-      await page.click(`a:has-text("${p}")`);
-      await page.waitForTimeout(500);
+      await page.click(`[id="${id}"]`);
+      await page.waitForTimeout(400);
     }
-  }
+  };
+  await ensureOpen('Pendaftaran');
+  await ensureOpen('Report Pendaftaran');
   await page.click(`a[href="#klinik/report/${menuLabel}/${menuLabel}"]`);
   await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(2000);
