@@ -49,7 +49,7 @@ export async function fetchKunjungan(year, month, day) {
     validateStatus: () => true,
   });
 
-  return { buffer: res.data, status: res.status, dateStr };
+  return { buffer: res.data, status: res.status, dateStr, url };
 }
 
 function shouldSkipDate(cursor, year, month, day) {
@@ -88,7 +88,8 @@ export async function processKunjungan(log, progress) {
 
       while (retries <= maxRetries && !success) {
         try {
-          const { buffer, status } = await fetchKunjungan(year, month, day);
+          const { buffer, status, url } = await fetchKunjungan(year, month, day);
+          log.info(`  URL: ${url}`);
 
           if (looksLikeHTML(buffer)) {
             const summary = summarizeHtml(buffer);

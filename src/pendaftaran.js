@@ -51,7 +51,7 @@ export async function fetchPendaftaran(year, month) {
     validateStatus: () => true,
   });
 
-  return { buffer: res.data, status: res.status, dateStart, dateEnd };
+  return { buffer: res.data, status: res.status, dateStart, dateEnd, url };
 }
 
 export async function processPendaftaran(log, progress) {
@@ -83,7 +83,8 @@ export async function processPendaftaran(log, progress) {
 
     while (retries <= maxRetries && !success) {
       try {
-        const { buffer, status } = await fetchPendaftaran(year, month);
+        const { buffer, status, url } = await fetchPendaftaran(year, month);
+        log.info(`  URL: ${url}`);
 
         if (looksLikeHTML(buffer)) {
           const summary = summarizeHtml(buffer);
