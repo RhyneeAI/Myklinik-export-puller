@@ -45,10 +45,22 @@ async function exportPage(context, menuLabel, dateStart, outputPath) {
       await page.waitForTimeout(2000);
     }
 
-    // Step 2: Navigate to report page via hash URL
-    await page.goto(`${BASE}/#klinik/report/${menuLabel}/${menuLabel}`, { waitUntil: 'load', timeout: 60000 });
+    // Step 2: Expand menu manually + click report link via Playwright
+    await page.evaluate(() => {
+      const expand = (id) => {
+        const s = document.getElementById(id);
+        if (!s) return;
+        const li = s.closest('li');
+        if (li) li.classList.add('open');
+        const u = li?.querySelector('ul.submenu');
+        if (u) { u.style.display = 'block'; u.classList.remove('nav-hide'); u.classList.add('nav-show'); }
+      };
+      expand('Pendaftaran');
+      expand('Report Pendaftaran');
+    });
+    await page.click(`a[href="#klinik/report/${menuLabel}/${menuLabel}"]`, { force: true, timeout: 5000 });
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await page.waitForSelector('#cDateStart', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(2000);
 
     await page.evaluate(({ start }) => {
       const setVal = (id, val) => {

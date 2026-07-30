@@ -31,9 +31,29 @@ function parseExcelToJson(buffer) {
 async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
   const page = await context.newPage();
   try {
-    // Step 1: Login if needed
     await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
-    if (await page.$('#ckeyKlinik')) {
+    await page.waitForTimeout(2000);
+
+    // Navigate via menu click
+    await page.evaluate((label) => {
+      const clickById = (id) => {
+        const el = document.getElementById(id);
+        if (el) { (el.closest('a') || el).click(); }
+      };
+      clickById('Pendaftaran');
+      clickById('Report Pendaftaran');
+      const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
+      if (link) link.click();
+    }, menuLabel);
+
+    // Wait for either login modal or report form
+    const waitResult = await Promise.race([
+      page.waitForSelector('#ckeyKlinik', { timeout: 60000 }).then(() => 'login'),
+      page.waitForSelector('#cDateStart', { timeout: 20000 }).then(() => 'form'),
+    ]).catch(() => 'timeout');
+
+    // If login modal appeared, fill and submit
+    if (waitResult === 'login') {
       const captcha = (await page.textContent('#captcha')).trim();
       await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
       await page.fill('#cUser', process.env.LOGIN_USER);
@@ -43,13 +63,21 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
       await page.click('#btnSubmit', { force: true });
       await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(2000);
+
+      // Re-navigate menu after login
+      await page.evaluate((label) => {
+        const clickById = (id) => {
+          const el = document.getElementById(id);
+          if (el) { (el.closest('a') || el).click(); }
+        };
+        clickById('Pendaftaran');
+        clickById('Report Pendaftaran');
+        const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
+        if (link) link.click();
+      }, menuLabel);
     }
 
-    // Step 2: Navigate to report page via hash URL
-    const hashUrl = `${BASE}/#klinik/report/${menuLabel}/${menuLabel}`;
-    await page.goto(hashUrl, { waitUntil: 'load', timeout: 60000 });
-    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await page.waitForSelector('#cDateStart', { timeout: 30000 }).catch(() => {});
+    await page.waitForSelector('#cDateStart', { timeout: 20000 }).catch(() => {});
 
     await page.evaluate(({ start, end }) => {
       const setVal = (id, val) => {
