@@ -29,7 +29,7 @@ function parseExcelToJson(buffer) {
 }
 
 async function tryLoginIfModal(page) {
-  for (let w = 0; w < 10; w++) {
+  for (let w = 0; w < 5; w++) {
     const loginForm = await page.$('#oForm:has(#ckeyKlinik)');
     if (!loginForm) { await page.waitForTimeout(1000); continue; }
     const captcha = (await page.textContent('#captcha')).trim();
@@ -49,8 +49,7 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
   const page = await context.newPage();
   try {
     await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
-    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+    await page.waitForSelector('[id="Pendaftaran"]', { timeout: 15000 });
 
     // Navigate via sidebar menu using DOM click
     await page.evaluate((label) => {
@@ -66,16 +65,11 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
       const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
       if (link) link.click();
     }, menuLabel);
-    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(3000);
 
-    // Check if login modal appeared
+    // Check if login modal appeared, or just wait for report form
     const didLogin = await tryLoginIfModal(page);
     if (didLogin) {
-      // After login, wait for report form to fully render
-      await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-      await page.waitForTimeout(5000);
-      // Re-navigate menu after login (session now valid)
+      await page.waitForSelector('#cDateStart', { timeout: 25000 }).catch(() => {});
       await page.evaluate((label) => {
         const clickById = (id) => {
           const el = document.getElementById(id);
@@ -89,9 +83,9 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
         const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
         if (link) link.click();
       }, menuLabel);
-      await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-      await page.waitForTimeout(3000);
     }
+    await page.waitForSelector('#cDateStart', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(500);
 
     await page.evaluate(({ start, end }) => {
       const setVal = (id, val) => {
@@ -106,9 +100,8 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
       if (end) setVal('cDateEnd', end);
     }, { start: dateStart, end: dateEnd });
 
-    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 30000 });
-    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(2000);
+    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 15000 });
+    await page.waitForSelector('#btn-export', { timeout: 20000 }).catch(() => page.waitForTimeout(2000));
 
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 30000 }),
