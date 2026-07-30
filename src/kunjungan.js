@@ -4,6 +4,7 @@ import XLSX from 'xlsx';
 import { http } from './httpClient.js';
 import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay } from './utils.js';
 import { updateKunjunganProgress } from './progress.js';
+import { getCsrfToken } from './auth.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -35,12 +36,16 @@ export async function fetchKunjungan(year, month, day) {
   const qs = `scRpt=klinik/report/inforekapkunjungan/inforekapkunjungan&cidLayanan=&cDateStart=${dateStr}&cidDiagnosa=&cJnsKelamin=`;
   const url = `/sc.excelme.php?${qs}`;
 
+  const headers = {
+    Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
+    Referer: ENDPOINT_URL.replace(/\/+$/, '') + '/#klinik/report/inforekapkunjungan/inforekapkunjungan',
+  };
+  const t = getCsrfToken();
+  if (t) headers['X-CSRF-TOKEN'] = t;
+
   const res = await http.get(url, {
     responseType: 'arraybuffer',
-    headers: {
-      Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
-      Referer: ENDPOINT_URL.replace(/\/+$/, '') + '/#klinik/report/inforekapkunjungan/inforekapkunjungan',
-    },
+    headers,
     validateStatus: () => true,
   });
 

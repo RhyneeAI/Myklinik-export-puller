@@ -1,12 +1,23 @@
+import fs from 'fs';
+import path from 'path';
 import dotenv from 'dotenv';
 import { http, jar } from './httpClient.js';
 
 dotenv.config();
 
-const { ENDPOINT_URL, SERVEID, SOKKACREATIVEID, TOKEN } = process.env;
+const { ENDPOINT_URL, SERVEID, SOKKACREATIVEID, TOKEN, OUTPUT_DIR } = process.env;
+
+let csrfToken = '';
+
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+export function getCsrfToken() {
+  return csrfToken;
+}
 
 export async function setCookies() {
-  const origin = new URL(ENDPOINT_URL).origin;
   const domain = new URL(ENDPOINT_URL).hostname;
 
   if (SERVEID) {
@@ -51,6 +62,14 @@ export async function testAuth() {
   }
 
   if (res.status >= 200 && res.status < 400) {
+    const tokenMatch = html.match(/<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']/i)
+      || html.match(/name="_token"\s+value="([^"]+)"/i);
+    if (tokenMatch) {
+      csrfToken = tokenMatch[1];
+    }
+    const outDir = OUTPUT_DIR || 'output';
+    ensureDir(path.join(outDir, 'debug'));
+    fs.writeFileSync(path.join(outDir, 'debug', 'main-page.html'), html, 'utf-8');
     return { ok: true, reason: `HTTP ${res.status} - Session valid` };
   }
 
