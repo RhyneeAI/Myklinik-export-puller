@@ -119,10 +119,18 @@ async function exportPage(context, menuLabel, dateStart, outputPath) {
 
     await page.waitForSelector('#btn-export', { timeout: 20000 }).catch(() => page.waitForTimeout(2000));
 
-    const [download] = await Promise.all([
-      page.waitForEvent('download', { timeout: 30000 }),
-      page.click('#btn-export, button:has-text("Export Excel")', { timeout: 10000 }),
-    ]);
+    let download;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        [download] = await Promise.all([
+          page.waitForEvent('download', { timeout: 30000 }),
+          page.click('#btn-export, button:has-text("Export Excel")', { timeout: 10000 }),
+        ]);
+        break;
+      } catch {
+        if (attempt === 1) throw new Error('Export download failed after retry');
+      }
+    }
 
     await download.saveAs(outputPath);
 
