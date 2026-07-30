@@ -84,7 +84,7 @@ export async function processPendaftaran(log, progress) {
     while (retries <= maxRetries && !success) {
       try {
         const { buffer, status, url } = await fetchPendaftaran(year, month);
-        log.info(`  URL: ${decodeURIComponent(url)}`);
+        log.raw(`  \x1b[34m\u2192\x1b[0m ${decodeURIComponent(url)}`);
 
         if (looksLikeHTML(buffer)) {
           const summary = summarizeHtml(buffer);
