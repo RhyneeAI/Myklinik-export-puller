@@ -91,7 +91,32 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
       if (end) setVal('cDateEnd', end);
     }, { start: dateStart, end: dateEnd });
 
-    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 15000 });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 15000 });
+        break;
+      } catch {
+        const loginForm = await page.$('#ckeyKlinik');
+        if (!loginForm) throw new Error('Cari button not found');
+        const captcha = (await page.textContent('#captcha')).trim();
+        await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
+        await page.fill('#cUser', process.env.LOGIN_USER);
+        await page.fill('#cPassword', process.env.LOGIN_PASS);
+        await page.fill('#cCaptcha', captcha);
+        await page.waitForTimeout(500);
+        await page.click('#btnSubmit', { force: true });
+        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+        await page.evaluate((label) => {
+          const clickById = (id) => { const el = document.getElementById(id); if (el) { (el.closest('a') || el).click(); } };
+          clickById('Pendaftaran');
+          clickById('Report Pendaftaran');
+          const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
+          if (link) link.click();
+        }, menuLabel);
+      }
+    }
+
     await page.waitForSelector('#btn-export', { timeout: 20000 }).catch(() => page.waitForTimeout(2000));
 
     const [download] = await Promise.all([
@@ -105,7 +130,7 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
     return { buffer, status: 200, dateStart, dateEnd };
   } catch (err) {
     const url = page.url();
-    if (url.includes('/login')) {
+    if (url.includes('/login') || (await page.$('#ckeyKlinik').catch(() => null))) {
       return { buffer: null, searchError: 'Session expired', searchFailed: true };
     }
     throw err;
