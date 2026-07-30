@@ -31,7 +31,24 @@ function parseExcelToJson(buffer) {
 async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
   const page = await context.newPage();
   try {
-    await page.goto(`${BASE}/#klinik/report/${menuLabel}/${menuLabel}`, { waitUntil: 'load', timeout: 60000 });
+    await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+
+    // Navigate via sidebar menu using DOM click (triggers onclick handlers)
+    await page.evaluate((label) => {
+      const clickById = (id) => {
+        const el = document.getElementById(id);
+        if (el) {
+          const a = el.closest('a') || el;
+          a.click();
+        }
+      };
+      clickById('Pendaftaran');
+      clickById('Report Pendaftaran');
+      const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
+      if (link) link.click();
+    }, menuLabel);
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
@@ -48,7 +65,7 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
       if (end) setVal('cDateEnd', end);
     }, { start: dateStart, end: dateEnd });
 
-    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 10000 });
+    await page.click('button:has-text("Cari"), input[value="Cari"]', { timeout: 15000 });
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(2000);
 

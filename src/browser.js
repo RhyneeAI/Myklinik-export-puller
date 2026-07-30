@@ -55,26 +55,29 @@ function parseCookies() {
 async function autoLogin(ctx, attempt) {
   const page = await ctx.newPage();
   try {
-    await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
-    // Wait longer for SPA to dynamically load login form
-    for (let w = 0; w < 15; w++) {
-      await page.waitForTimeout(1000);
-      if (await page.$('#ckeyKlinik')) break;
-    }
+    // Try to find login form at various URLs
+    let hasForm = false;
+    const urlsToTry = [BASE, BASE + '/login', BASE + '/auth/login', BASE + '/index.php'];
 
-    const currentUrl = page.url();
-    let hasForm = await page.$('#ckeyKlinik');
+    for (const url of urlsToTry) {
+      try {
+        await page.goto(url, { waitUntil: 'load', timeout: 20000 });
+        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        await page.waitForTimeout(2000);
 
-    // If still not found, try navigating to common login paths
-    if (!hasForm) {
-      for (const path of ['/login', '/auth/login', '/klinik/', '/index.php']) {
-        try {
-          await page.goto(BASE + path, { waitUntil: 'load', timeout: 15000 });
-          await page.waitForTimeout(3000);
+        // Check for login form in: main DOM, iframes, shadow DOM, modals
+        hasForm = await page.$('#ckeyKlinik, #cUser, #cPassword, #cCaptcha, #btnSubmit');
+        if (hasForm) break;
+
+        // Also look for login buttons/modals
+        const loginBtn = await page.$('button:has-text("Login"), a:has-text("Login"), [href*="login"]');
+        if (loginBtn) {
+          await loginBtn.click();
+          await page.waitForTimeout(2000);
           hasForm = await page.$('#ckeyKlinik');
           if (hasForm) break;
-        } catch {}
-      }
+        }
+      } catch {}
     }
 
     if (!hasForm) {
