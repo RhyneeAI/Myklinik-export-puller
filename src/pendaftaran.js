@@ -31,12 +31,37 @@ function parseExcelToJson(buffer) {
   }
 }
 
+function pendaftaranSearchPayload(dateStart, dateEnd) {
+  const s = new URLSearchParams();
+  s.append('cPar', './pages/klinik/report/infodaftarharian/add.ajax.php');
+  s.append('cFunction', 'GetListDaftar');
+  s.append('cData[draw]', '1');
+  s.append('cData[start]', '0');
+  s.append('cData[length]', '-1');
+  s.append('cData[dateStart]', dateStart);
+  s.append('cData[dateEnd]', dateEnd);
+  s.append('cData[idJaminan]', '');
+  s.append('cData[idLayanan]', '');
+  for (const i of Array.from({ length: 17 }, (_, i) => i)) {
+    s.append(`cData[columns][${i}][data]`, String(i));
+    s.append(`cData[columns][${i}][name]`, '');
+    s.append(`cData[columns][${i}][searchable]`, 'true');
+    s.append(`cData[columns][${i}][orderable]`, 'false');
+    s.append(`cData[columns][${i}][search][value]`, '');
+    s.append(`cData[columns][${i}][search][regex]`, 'false');
+  }
+  s.append('cData[order][0][column]', '0');
+  s.append('cData[order][0][dir]', 'asc');
+  s.append('cData[search][value]', '');
+  s.append('cData[search][regex]', 'false');
+  return s.toString();
+}
+
 export async function fetchPendaftaran(year, month) {
   const lastDay = getDaysInMonth(year, month);
   const dateStart = formatDateDMY(year, month, 1);
   const dateEnd = formatDateDMY(year, month, lastDay);
 
-  const params = `scRpt=klinik/report/infodaftarharian/infodaftarharian&cIdJaminan=&cidLayanan=&cDateStart=${dateStart}&cDateEnd=${dateEnd}`;
   const base = ENDPOINT_URL.replace(/\/+$/, '');
 
   const headers = {
@@ -50,13 +75,14 @@ export async function fetchPendaftaran(year, month) {
   const a = getAuthToken();
   if (a) headers['Authorization'] = `Bearer ${a}`;
 
-  // Step 1: trigger search via GET to populate server session
-  await http.get('/?' + params, {
-    headers: { ...headers, Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+  // Step 1: POST search to populate server session
+  await http.post('/sc.core.php', pendaftaranSearchPayload(dateStart, dateEnd), {
+    headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
   });
 
   // Step 2: export Excel
+  const params = `scRpt=klinik/report/infodaftarharian/infodaftarharian&cIdJaminan=&cidLayanan=&cDateStart=${dateStart}&cDateEnd=${dateEnd}`;
   const url = `/sc.excelme.php?${params}`;
   const res = await http.get(url, {
     responseType: 'arraybuffer',

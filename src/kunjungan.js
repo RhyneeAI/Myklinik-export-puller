@@ -30,10 +30,35 @@ function parseExcelToJson(buffer) {
   }
 }
 
+function kunjunganSearchPayload(dateStr) {
+  const s = new URLSearchParams();
+  s.append('cPar', './pages/klinik/report/inforekapkunjungan/add.ajax.php');
+  s.append('cFunction', 'GetListKunjungan');
+  s.append('cData[draw]', '1');
+  s.append('cData[start]', '0');
+  s.append('cData[length]', '-1');
+  s.append('cData[dateStart]', dateStr);
+  s.append('cData[idLayanan]', '');
+  s.append('cData[iddiagnosa]', '');
+  s.append('cData[idJnsKel]', '');
+  for (const i of Array.from({ length: 24 }, (_, i) => i)) {
+    s.append(`cData[columns][${i}][data]`, String(i));
+    s.append(`cData[columns][${i}][name]`, '');
+    s.append(`cData[columns][${i}][searchable]`, 'true');
+    s.append(`cData[columns][${i}][orderable]`, 'false');
+    s.append(`cData[columns][${i}][search][value]`, '');
+    s.append(`cData[columns][${i}][search][regex]`, 'false');
+  }
+  s.append('cData[order][0][column]', '0');
+  s.append('cData[order][0][dir]', 'asc');
+  s.append('cData[search][value]', '');
+  s.append('cData[search][regex]', 'false');
+  return s.toString();
+}
+
 export async function fetchKunjungan(year, month, day) {
   const dateStr = formatDateDMY(year, month, day);
 
-  const params = `scRpt=klinik/report/inforekapkunjungan/inforekapkunjungan&cidLayanan=&cDateStart=${dateStr}&cidDiagnosa=&cJnsKelamin=`;
   const base = ENDPOINT_URL.replace(/\/+$/, '');
 
   const headers = {
@@ -47,14 +72,15 @@ export async function fetchKunjungan(year, month, day) {
   const a = getAuthToken();
   if (a) headers['Authorization'] = `Bearer ${a}`;
 
-  // Step 1: trigger search via GET to populate server session
-  await http.get('/?' + params, {
-    headers: { ...headers, Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+  // Step 1: POST search to populate server session
+  await http.post('/sc.core.php', kunjunganSearchPayload(dateStr), {
+    headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
     validateStatus: () => true,
   });
 
   // Step 2: export Excel
-  const url = `/sc.excelme.php?${params}`;
+  const exportParams = `scRpt=klinik/report/inforekapkunjungan/inforekapkunjungan&cidLayanan=&cDateStart=${dateStr}&cidDiagnosa=&cJnsKelamin=`;
+  const url = `/sc.excelme.php?${exportParams}`;
 
   const exportHeaders = {
     ...headers,
