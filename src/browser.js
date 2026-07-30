@@ -6,48 +6,9 @@ dotenv.config();
 
 const ENDPOINT_URL = process.env.ENDPOINT_URL || 'https://apps.myklinik.id';
 const BASE = ENDPOINT_URL.replace(/\/+$/, '');
-const DOMAIN = new URL(BASE).hostname;
 
 let context = null;
 let tempProfileDir = null;
-
-function parseCookies() {
-  const c = [];
-  const add = (name, value, domain, path) => {
-    if (value) c.push({ name, value, domain: domain || DOMAIN, path: path || '/' });
-  };
-
-  if (process.env.COOKIES_JSON) {
-    try {
-      const parsed = JSON.parse(process.env.COOKIES_JSON);
-      for (const item of parsed) {
-        c.push({ name: item.name, value: item.value, domain: item.domain || DOMAIN, path: item.path || '/' });
-      }
-      return c;
-    } catch {}
-  }
-
-  add('SERVERID', process.env.SERVERID || process.env.SERVEID);
-  add('SOKKACREATIVEID', process.env.SOKKACREATIVEID);
-  add('token', process.env.TOKEN);
-  add('key1', process.env.KEY1);
-  add('key2', process.env.KEY2);
-  add('key3', process.env.KEY3);
-  add('key4', process.env.KEY4);
-
-  if (process.env.SESSION_NAME && process.env.SESSION_VALUE) {
-    add(process.env.SESSION_NAME, process.env.SESSION_VALUE);
-  } else {
-    for (const key of Object.keys(process.env)) {
-      if (/^[a-zA-Z0-9]{20,30}$/.test(key) && key !== key.toUpperCase()) {
-        add(key, process.env[key]);
-        break;
-      }
-    }
-  }
-
-  return c;
-}
 
 export async function createContext() {
   tempProfileDir = path.join(process.env.TEMP || 'D:\\temp', 'pw-chrome-' + Date.now());
@@ -56,12 +17,9 @@ export async function createContext() {
     channel: 'chrome',
     headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
     args: ['--no-first-run', '--disable-default-apps', '--no-default-browser-check'],
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
     locale: 'id-ID',
   });
 
-  const cookies = parseCookies();
-  if (cookies.length > 0) await context.addCookies(cookies);
   return context;
 }
 

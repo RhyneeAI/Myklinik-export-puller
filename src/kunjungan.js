@@ -28,64 +28,27 @@ function parseExcelToJson(buffer) {
   }
 }
 
-async function tryLoginIfModal(page) {
-  for (let w = 0; w < 5; w++) {
-    const loginForm = await page.$('#oForm:has(#ckeyKlinik)');
-    if (!loginForm) { await page.waitForTimeout(1000); continue; }
-    const captcha = (await page.textContent('#captcha')).trim();
-    await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
-    await page.fill('#cUser', process.env.LOGIN_USER);
-    await page.fill('#cPassword', process.env.LOGIN_PASS);
-    await page.fill('#cCaptcha', captcha);
-    await page.click('#btnSubmit');
-    await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
-    await page.waitForTimeout(2000);
-    return true;
-  }
-  return false;
-}
-
 async function exportPage(context, menuLabel, dateStart, outputPath) {
   const page = await context.newPage();
   try {
+    // Step 1: Login if needed
     await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
-    await page.waitForSelector('[id="Pendaftaran"]', { timeout: 15000 });
-
-    // Navigate via sidebar menu using DOM click
-    await page.evaluate((label) => {
-      const clickById = (id) => {
-        const el = document.getElementById(id);
-        if (el) {
-          const a = el.closest('a') || el;
-          a.click();
-        }
-      };
-      clickById('Pendaftaran');
-      clickById('Report Pendaftaran');
-      const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
-      if (link) link.click();
-    }, menuLabel);
-
-    // Check if login modal appeared
-    const didLogin = await tryLoginIfModal(page);
-    if (didLogin) {
-      await page.waitForSelector('#cDateStart', { timeout: 25000 }).catch(() => {});
-      await page.evaluate((label) => {
-        const clickById = (id) => {
-          const el = document.getElementById(id);
-          if (el) {
-            const a = el.closest('a') || el;
-            a.click();
-          }
-        };
-        clickById('Pendaftaran');
-        clickById('Report Pendaftaran');
-        const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
-        if (link) link.click();
-      }, menuLabel);
+    if (await page.$('#ckeyKlinik')) {
+      const captcha = (await page.textContent('#captcha')).trim();
+      await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
+      await page.fill('#cUser', process.env.LOGIN_USER);
+      await page.fill('#cPassword', process.env.LOGIN_PASS);
+      await page.fill('#cCaptcha', captcha);
+      await page.waitForTimeout(500);
+      await page.click('#btnSubmit', { force: true });
+      await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(2000);
     }
-    await page.waitForSelector('#cDateStart', { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(500);
+
+    // Step 2: Navigate to report page via hash URL
+    await page.goto(`${BASE}/#klinik/report/${menuLabel}/${menuLabel}`, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForSelector('#cDateStart', { timeout: 30000 }).catch(() => {});
 
     await page.evaluate(({ start }) => {
       const setVal = (id, val) => {
