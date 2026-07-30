@@ -102,7 +102,7 @@ async function exportPage(context, menuLabel, dateStart, outputPath) {
     await download.saveAs(outputPath);
 
     const buffer = fs.readFileSync(outputPath);
-    return { buffer, status: 200, dateStr };
+    return { buffer, status: 200, dateStr: dateStart };
   } catch (err) {
     const url = page.url();
     if (url.includes('/login')) {
