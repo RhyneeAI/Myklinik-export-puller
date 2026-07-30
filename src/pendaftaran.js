@@ -36,12 +36,12 @@ export async function fetchPendaftaran(year, month) {
   const dateStart = formatDateDMY(year, month, 1);
   const dateEnd = formatDateDMY(year, month, lastDay);
 
-  const qs = `scRpt=klinik/report/infodaftarharian/infodaftarharian&cIdJaminan=&cidLayanan=&cDateStart=${dateStart}&cDateEnd=${dateEnd}`;
-  const url = `/sc.excelme.php?${qs}`;
+  const params = `scRpt=klinik/report/infodaftarharian/infodaftarharian&cIdJaminan=&cidLayanan=&cDateStart=${dateStart}&cDateEnd=${dateEnd}`;
+  const base = ENDPOINT_URL.replace(/\/+$/, '');
 
   const headers = {
-    Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
-    Referer: ENDPOINT_URL.replace(/\/+$/, '') + '/#klinik/report/infodaftarharian/infodaftarharian',
+    Accept: '*/*',
+    Referer: base + '/#klinik/report/infodaftarharian/infodaftarharian',
     'X-Requested-With': 'XMLHttpRequest',
     'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
   };
@@ -50,9 +50,17 @@ export async function fetchPendaftaran(year, month) {
   const a = getAuthToken();
   if (a) headers['Authorization'] = `Bearer ${a}`;
 
+  // Step 1: trigger search via GET to populate server session
+  await http.get('/?' + params, {
+    headers: { ...headers, Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+    validateStatus: () => true,
+  });
+
+  // Step 2: export Excel
+  const url = `/sc.excelme.php?${params}`;
   const res = await http.get(url, {
     responseType: 'arraybuffer',
-    headers,
+    headers: { ...headers, Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*' },
     validateStatus: () => true,
   });
 

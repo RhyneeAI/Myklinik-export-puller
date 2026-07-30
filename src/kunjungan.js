@@ -33,12 +33,12 @@ function parseExcelToJson(buffer) {
 export async function fetchKunjungan(year, month, day) {
   const dateStr = formatDateDMY(year, month, day);
 
-  const qs = `scRpt=klinik/report/inforekapkunjungan/inforekapkunjungan&cidLayanan=&cDateStart=${dateStr}&cidDiagnosa=&cJnsKelamin=`;
-  const url = `/sc.excelme.php?${qs}`;
+  const params = `scRpt=klinik/report/inforekapkunjungan/inforekapkunjungan&cidLayanan=&cDateStart=${dateStr}&cidDiagnosa=&cJnsKelamin=`;
+  const base = ENDPOINT_URL.replace(/\/+$/, '');
 
   const headers = {
-    Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
-    Referer: ENDPOINT_URL.replace(/\/+$/, '') + '/#klinik/report/inforekapkunjungan/inforekapkunjungan',
+    Accept: '*/*',
+    Referer: base + '/#klinik/report/inforekapkunjungan/inforekapkunjungan',
     'X-Requested-With': 'XMLHttpRequest',
     'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
   };
@@ -47,9 +47,23 @@ export async function fetchKunjungan(year, month, day) {
   const a = getAuthToken();
   if (a) headers['Authorization'] = `Bearer ${a}`;
 
+  // Step 1: trigger search via GET to populate server session
+  await http.get('/?' + params, {
+    headers: { ...headers, Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+    validateStatus: () => true,
+  });
+
+  // Step 2: export Excel
+  const url = `/sc.excelme.php?${params}`;
+
+  const exportHeaders = {
+    ...headers,
+    Accept: 'application/vnd.ms-excel,application/octet-stream,application/x-xls,*/*',
+  };
+
   const res = await http.get(url, {
     responseType: 'arraybuffer',
-    headers,
+    headers: exportHeaders,
     validateStatus: () => true,
   });
 
