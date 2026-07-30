@@ -18,13 +18,20 @@ function cyan(t) { return `${CYN}${t}${R}`; }
 
 export function createLogger(projectName, version) {
   function header(target, mode) {
+    divider();
     console.log(`# ${bold(projectName)} ${dim('v' + version)}`);
     console.log();
     console.log(`**Target:** ${target}  **Mode:** ${mode}`);
     console.log();
   }
 
+  function divider() {
+    console.log('---');
+    console.log();
+  }
+
   function section(title) {
+    divider();
     console.log(`## ${bold(title)}`);
     console.log();
   }
@@ -80,7 +87,7 @@ export function createLogger(projectName, version) {
   }
 
   return {
-    header, section, step, data,
+    header, section, divider, step, data,
     warn, error, info, success,
     summary, footer, raw,
   };

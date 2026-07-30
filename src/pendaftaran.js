@@ -10,6 +10,7 @@ dotenv.config();
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR || 'output';
 const APP_TARGET = process.env.APP_TARGET || 'Export';
+const ENDPOINT_URL = process.env.ENDPOINT_URL || '';
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -84,7 +85,8 @@ export async function processPendaftaran(log, progress) {
     while (retries <= maxRetries && !success) {
       try {
         const { buffer, status, url } = await fetchPendaftaran(year, month);
-        log.raw(`  \x1b[34m\u2192\x1b[0m ${decodeURIComponent(url)}`);
+        const base = ENDPOINT_URL.replace(/\/+$/, '');
+        log.raw(`${base}${decodeURIComponent(url)}`);
 
         if (looksLikeHTML(buffer)) {
           const summary = summarizeHtml(buffer);
