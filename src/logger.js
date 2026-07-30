@@ -29,8 +29,11 @@ function pad(s, len) {
 }
 
 export function createLogger(projectName, version) {
+  const cols = (process.stdout.columns || 100) - 2;
+  const boxWidth = Math.max(60, Math.min(cols, 120));
+  const contentWidth = boxWidth - 4;
+
   const headerText = `${BOLD}${CYAN}${projectName}${RESET} ${DIM}v${version}${RESET}`;
-  const boxWidth = 72;
 
   function topLine() {
     console.log(`  ${DB_TL}${DB_H.repeat(boxWidth - 2)}${DB_TR}`);
@@ -46,10 +49,13 @@ export function createLogger(projectName, version) {
 
   function boxLine(label, value = '') {
     const content = ` ${label}${value ? ' ' + value : ''}`;
-    const padded = content.length > boxWidth - 4
-      ? content.slice(0, boxWidth - 7) + '...'
-      : pad(content, boxWidth - 4);
-    console.log(`  ${DB_V} ${padded}${RESET} ${DB_V}`);
+    if (content.length > contentWidth) {
+      const truncated = content.slice(0, contentWidth - 3) + '...';
+      console.log(`  ${DB_V} ${truncated}${RESET} ${DB_V}`);
+    } else {
+      const padded = pad(content, contentWidth);
+      console.log(`  ${DB_V} ${padded}${RESET} ${DB_V}`);
+    }
   }
 
   function header(target, mode) {

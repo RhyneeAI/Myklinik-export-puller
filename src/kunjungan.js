@@ -89,7 +89,7 @@ export async function processKunjungan(log, progress) {
       while (retries <= maxRetries && !success) {
         try {
           const { buffer, status, url } = await fetchKunjungan(year, month, day);
-          log.info(`  URL: ${url}`);
+          log.info(`  URL: ${decodeURIComponent(url)}`);
 
           if (looksLikeHTML(buffer)) {
             const summary = summarizeHtml(buffer);
