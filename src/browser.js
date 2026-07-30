@@ -1,4 +1,6 @@
 import { chromium } from 'playwright';
+import fs from 'fs';
+import path from 'path';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -47,11 +49,25 @@ export async function launch() {
   return browser;
 }
 
-async function autoLogin(ctx) {
+async function autoLogin(ctx, attempt) {
   const page = await ctx.newPage();
   try {
-    await page.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 });
-    await page.waitForSelector('#ckeyKlinik', { timeout: 15000 });
+    await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+
+    const currentUrl = page.url();
+    const hasForm = await page.$('#ckeyKlinik');
+
+    if (!hasForm) {
+      const outputDir = process.env.OUTPUT_DIR || 'output';
+      const debugDir = path.join(outputDir, 'debug');
+      if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+      await page.screenshot({ path: path.join(debugDir, `login-attempt-${attempt}.png`) });
+      const html = await page.content();
+      fs.writeFileSync(path.join(debugDir, `login-attempt-${attempt}.html`), html, 'utf-8');
+      throw new Error(`Login form not found at ${currentUrl} — screenshot saved`);
+    }
 
     const captcha = (await page.textContent('#captcha')).trim();
 
@@ -64,8 +80,8 @@ async function autoLogin(ctx) {
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(2000);
 
-    const currentUrl = page.url();
-    if (currentUrl.includes('/login') || currentUrl === BASE + '/' || currentUrl === BASE) {
+    const afterUrl = page.url();
+    if (afterUrl.includes('/login') || afterUrl === BASE + '/' || afterUrl === BASE) {
       throw new Error('Login failed - returned to login page');
     }
 
@@ -88,7 +104,7 @@ export async function createContext() {
     let lastErr;
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        await autoLogin(ctx);
+        await autoLogin(ctx, i + 1);
         return ctx;
       } catch (err) {
         lastErr = err;
