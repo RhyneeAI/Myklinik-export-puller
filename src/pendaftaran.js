@@ -28,13 +28,51 @@ function parseExcelToJson(buffer) {
   }
 }
 
-async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
-  const page = await context.newPage();
-  try {
+async function ensureOnReportPage(page, menuLabel) {
+  const isFormPresent = await page.$('#cDateStart').catch(() => null);
+  const isLoginPresent = await page.$('#ckeyKlinik').catch(() => null);
+
+  if (isFormPresent && !isLoginPresent) {
+    return; // Already on report form and authenticated
+  }
+
+  const currentUrl = page.url();
+  if (!currentUrl || currentUrl === 'about:blank' || isLoginPresent) {
     await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForTimeout(1000);
+  }
+
+  // Navigate via menu click
+  await page.evaluate((label) => {
+    const clickById = (id) => {
+      const el = document.getElementById(id);
+      if (el) { (el.closest('a') || el).click(); }
+    };
+    clickById('Pendaftaran');
+    clickById('Report Pendaftaran');
+    const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
+    if (link) link.click();
+  }, menuLabel);
+
+  // Wait for either login modal or report form
+  const waitResult = await Promise.race([
+    page.waitForSelector('#ckeyKlinik', { timeout: 60000 }).then(() => 'login'),
+    page.waitForSelector('#cDateStart', { timeout: 20000 }).then(() => 'form'),
+  ]).catch(() => 'timeout');
+
+  // If login modal appeared, fill and submit
+  if (waitResult === 'login') {
+    const captcha = (await page.textContent('#captcha')).trim();
+    await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
+    await page.fill('#cUser', process.env.LOGIN_USER);
+    await page.fill('#cPassword', process.env.LOGIN_PASS);
+    await page.fill('#cCaptcha', captcha);
+    await page.waitForTimeout(500);
+    await page.click('#btnSubmit', { force: true });
+    await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
     await page.waitForTimeout(2000);
 
-    // Navigate via menu click
+    // Re-navigate menu after login
     await page.evaluate((label) => {
       const clickById = (id) => {
         const el = document.getElementById(id);
@@ -45,38 +83,14 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
       const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
       if (link) link.click();
     }, menuLabel);
+  }
 
-    // Wait for either login modal or report form
-    const waitResult = await Promise.race([
-      page.waitForSelector('#ckeyKlinik', { timeout: 60000 }).then(() => 'login'),
-      page.waitForSelector('#cDateStart', { timeout: 20000 }).then(() => 'form'),
-    ]).catch(() => 'timeout');
+  await page.waitForSelector('#cDateStart', { timeout: 20000 });
+}
 
-    // If login modal appeared, fill and submit
-    if (waitResult === 'login') {
-      const captcha = (await page.textContent('#captcha')).trim();
-      await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
-      await page.fill('#cUser', process.env.LOGIN_USER);
-      await page.fill('#cPassword', process.env.LOGIN_PASS);
-      await page.fill('#cCaptcha', captcha);
-      await page.waitForTimeout(500);
-      await page.click('#btnSubmit', { force: true });
-      await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
-      await page.waitForTimeout(2000);
-
-      await page.evaluate((label) => {
-        const clickById = (id) => {
-          const el = document.getElementById(id);
-          if (el) { (el.closest('a') || el).click(); }
-        };
-        clickById('Pendaftaran');
-        clickById('Report Pendaftaran');
-        const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
-        if (link) link.click();
-      }, menuLabel);
-    }
-
-    await page.waitForSelector('#cDateStart', { timeout: 20000 }).catch(() => {});
+async function exportSinglePeriod(page, menuLabel, dateStart, dateEnd, outputPath) {
+  try {
+    await ensureOnReportPage(page, menuLabel);
 
     await page.evaluate(({ start, end }) => {
       const setVal = (id, val) => {
@@ -98,26 +112,11 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
       } catch {
         const loginForm = await page.$('#ckeyKlinik');
         if (!loginForm) throw new Error('Cari button not found');
-        const captcha = (await page.textContent('#captcha')).trim();
-        await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
-        await page.fill('#cUser', process.env.LOGIN_USER);
-        await page.fill('#cPassword', process.env.LOGIN_PASS);
-        await page.fill('#cCaptcha', captcha);
-        await page.waitForTimeout(500);
-        await page.click('#btnSubmit', { force: true });
-        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
-        await page.waitForTimeout(2000);
-        await page.evaluate((label) => {
-          const clickById = (id) => { const el = document.getElementById(id); if (el) { (el.closest('a') || el).click(); } };
-          clickById('Pendaftaran');
-          clickById('Report Pendaftaran');
-          const link = document.querySelector(`a[href="#klinik/report/${label}/${label}"]`);
-          if (link) link.click();
-        }, menuLabel);
+        await ensureOnReportPage(page, menuLabel);
       }
     }
 
-    await page.waitForSelector('#btn-export', { timeout: 20000 }).catch(() => page.waitForTimeout(2000));
+    await page.waitForSelector('#btn-export', { timeout: 20000 }).catch(() => page.waitForTimeout(1000));
 
     let download;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -135,19 +134,17 @@ async function exportPage(context, menuLabel, dateStart, dateEnd, outputPath) {
     await download.saveAs(outputPath);
 
     const buffer = fs.readFileSync(outputPath);
-    return { buffer, status: 200, dateStart, dateEnd };
+    return { buffer, status: 200, dateStart, dateEnd, outputPath };
   } catch (err) {
     const url = page.url();
     if (url.includes('/login') || (await page.$('#ckeyKlinik').catch(() => null))) {
       return { buffer: null, searchError: 'Session expired', searchFailed: true };
     }
     throw err;
-  } finally {
-    await page.close().catch(() => {});
   }
 }
 
-export async function fetchPendaftaran(year, month, context) {
+export async function fetchPendaftaran(year, month, page) {
   const lastDay = getDaysInMonth(year, month);
   const dateStart = formatDateDMY(year, month, 1);
   const dateEnd = formatDateDMY(year, month, lastDay);
@@ -156,13 +153,13 @@ export async function fetchPendaftaran(year, month, context) {
   ensureDir(dirName);
   const outputPath = path.join(dirName, `${APP_TARGET}_${formatFileDate(year, month)}.xlsx`);
 
-  const result = await exportPage(context, 'infodaftarharian', dateStart, dateEnd, outputPath);
+  const result = await exportSinglePeriod(page, 'infodaftarharian', dateStart, dateEnd, outputPath);
 
   if (result.searchFailed) {
     return { buffer: null, status: 401, dateStart, dateEnd, searchFailed: true, searchError: result.searchError };
   }
 
-  return { buffer: result.buffer, status: 200, dateStart, dateEnd };
+  return { buffer: result.buffer, status: 200, dateStart, dateEnd, outputPath: result.outputPath };
 }
 
 export async function processPendaftaran(log, progress, context) {
@@ -172,6 +169,7 @@ export async function processPendaftaran(log, progress, context) {
   let totalRows = 0;
   let year = start.year;
   let month = start.month;
+  const allPeriodRows = [];
 
   log.startTable([
     { label: 'Period', width: 10 },
@@ -180,107 +178,136 @@ export async function processPendaftaran(log, progress, context) {
     { label: 'File', width: 30 },
   ]);
 
-  while (year > end.year || (year === end.year && month >= end.month)) {
-    const period = `${year}-${String(month).padStart(2, '0')}`;
-    const dateKey = formatFileDate(year, month);
-    const fname = `${APP_TARGET}_${dateKey}.xlsx`;
+  let page = await context.newPage();
 
-    const cursor = progress.pendaftaran.cursor;
-    if (cursor) {
-      const cursorLabel = `${cursor.year}_${String(cursor.month).padStart(2, '0')}`;
-      const cmp = `${year}_${String(month).padStart(2, '0')}`;
-      if (cmp >= cursorLabel) {
-        log.tableRow([dim(period), yellow('SKIP'), dim('-'), dim(fname)]);
-        month--;
-        if (month < 1) { month = 12; year--; }
-        continue;
+  try {
+    while (year > end.year || (year === end.year && month >= end.month)) {
+      const period = `${year}-${String(month).padStart(2, '0')}`;
+      const dateKey = formatFileDate(year, month);
+      const fname = `${APP_TARGET}_${dateKey}.xlsx`;
+
+      const cursor = progress.pendaftaran.cursor;
+      if (cursor) {
+        const cursorLabel = `${cursor.year}_${String(cursor.month).padStart(2, '0')}`;
+        const cmp = `${year}_${String(month).padStart(2, '0')}`;
+        if (cmp >= cursorLabel) {
+          log.tableRow([dim(period), yellow('SKIP'), dim('-'), dim(fname)]);
+          month--;
+          if (month < 1) { month = 12; year--; }
+          continue;
+        }
       }
-    }
 
-    let retries = 0;
-    const maxRetries = parseInt(process.env.MAX_RETRIES || '3', 10);
-    let success = false;
+      let retries = 0;
+      const maxRetries = parseInt(process.env.MAX_RETRIES || '3', 10);
+      let success = false;
 
-    while (retries <= maxRetries && !success) {
-      try {
-        const result = await fetchPendaftaran(year, month, context);
-        const { buffer, status } = result;
+      while (retries <= maxRetries && !success) {
+        try {
+          const result = await fetchPendaftaran(year, month, page);
+          const { buffer, status } = result;
 
-        if (result.searchFailed) {
-          log.tableRow([period, red(result.searchError || 'FAIL'), dim('-'), dim('search')]);
+          if (result.searchFailed) {
+            log.tableRow([period, red(result.searchError || 'FAIL'), dim('-'), dim('search')]);
+            retries++;
+            if (retries <= maxRetries) {
+              log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
+              await sleep(30000);
+            }
+            continue;
+          }
+
+          if (looksLikeHTML(buffer)) {
+            const summary = summarizeHtml(buffer);
+            if (summary.hasLogin) {
+              log.error(`${period}  Session expired!`);
+              log.endTable();
+              return { interrupted: true, reason: 'Session expired' };
+            }
+            log.tableRow([period, red('HTML'), dim(String(status)), dim(summary.title || '')]);
+            retries++;
+            if (retries <= maxRetries) {
+              log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
+              await sleep(30000);
+            }
+            continue;
+          }
+
+          const jsonRows = parseExcelToJson(buffer);
+          const rowCount = jsonRows.length;
+
+          const dirName = path.join(OUTPUT_DIR, 'pendaftaran', String(year));
+          ensureDir(dirName);
+
+          const excelName = `${APP_TARGET}_${dateKey}.xlsx`;
+          const jsonName = `${APP_TARGET}_${dateKey}.json`;
+
+          const excelPath = path.join(dirName, excelName);
+          const jsonPath = path.join(dirName, jsonName);
+
+          if (result.outputPath && fs.existsSync(result.outputPath)) {
+            fs.copyFileSync(result.outputPath, excelPath);
+          } else {
+            fs.writeFileSync(excelPath, buffer);
+          }
+          fs.writeFileSync(jsonPath, JSON.stringify(jsonRows, null, 2), 'utf-8');
+
+          if (jsonRows.length > 0) {
+            allPeriodRows.push(...jsonRows);
+          }
+
+          updatePendaftaranProgress(year, month);
+
+          log.tableRow([period, green('SAVED'), String(rowCount), fname]);
+          totalFiles++;
+          totalRows += rowCount;
+          success = true;
+        } catch (err) {
+          log.tableRow([period, red('FAIL'), dim('-'), dim(err.message || err)]);
           retries++;
           if (retries <= maxRetries) {
             log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
+            if (page.isClosed()) {
+              page = await context.newPage();
+            }
             await sleep(30000);
           }
-          continue;
-        }
-
-        if (looksLikeHTML(buffer)) {
-          const summary = summarizeHtml(buffer);
-          if (summary.hasLogin) {
-            log.error(`${period}  Session expired!`);
-            log.endTable();
-            return { interrupted: true, reason: 'Session expired' };
-          }
-          log.tableRow([period, red('HTML'), dim(String(status)), dim(summary.title || '')]);
-          retries++;
-          if (retries <= maxRetries) {
-            log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
-            await sleep(30000);
-          }
-          continue;
-        }
-
-        const jsonRows = parseExcelToJson(buffer);
-        const rowCount = jsonRows.length;
-
-        const dirName = path.join(OUTPUT_DIR, 'pendaftaran', String(year));
-        ensureDir(dirName);
-
-        const excelName = `${APP_TARGET}_${dateKey}.xlsx`;
-        const jsonName = `${APP_TARGET}_${dateKey}.json`;
-
-        const excelPath = path.join(dirName, excelName);
-        const jsonPath = path.join(dirName, jsonName);
-
-        if (result.outputPath && fs.existsSync(result.outputPath)) {
-          fs.copyFileSync(result.outputPath, excelPath);
-        } else {
-          fs.writeFileSync(excelPath, buffer);
-        }
-        fs.writeFileSync(jsonPath, JSON.stringify(jsonRows, null, 2), 'utf-8');
-
-        updatePendaftaranProgress(year, month);
-
-        log.tableRow([period, green('SAVED'), String(rowCount), fname]);
-        totalFiles++;
-        totalRows += rowCount;
-        success = true;
-      } catch (err) {
-        log.tableRow([period, red('FAIL'), dim('-'), dim(err.message || err)]);
-        retries++;
-        if (retries <= maxRetries) {
-          log.info(`  Retry ${retries}/${maxRetries} in 30s...`);
-          await sleep(30000);
         }
       }
+
+      if (!success) {
+        log.endTable();
+        log.error(`${period}  Failed after ${maxRetries} retries`);
+        return { interrupted: true, reason: `Failed at ${period} after retries` };
+      }
+
+      if (year === end.year && month === end.month) break;
+
+      month--;
+      if (month < 1) { month = 12; year--; }
+
+      await requestDelay();
     }
 
-    if (!success) {
-      log.endTable();
-      log.error(`${period}  Failed after ${maxRetries} retries`);
-      return { interrupted: true, reason: `Failed at ${period} after retries` };
+    log.endTable();
+
+    if (allPeriodRows.length > 0) {
+      const mergedDir = path.join(OUTPUT_DIR, 'pendaftaran', 'merged');
+      ensureDir(mergedDir);
+      const masterExcelPath = path.join(mergedDir, `${APP_TARGET}_pendaftaran_ALL_merged.xlsx`);
+      const masterJsonPath = path.join(mergedDir, `${APP_TARGET}_pendaftaran_ALL_merged.json`);
+
+      const ws = XLSX.utils.json_to_sheet(allPeriodRows, { defval: '' });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Pendaftaran ALL');
+      fs.writeFileSync(masterExcelPath, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+      fs.writeFileSync(masterJsonPath, JSON.stringify(allPeriodRows, null, 2), 'utf-8');
+
+      log.info(`  Master merged (ALL): pendaftaran/merged/${APP_TARGET}_pendaftaran_ALL_merged.xlsx (${allPeriodRows.length} total rows)`);
     }
 
-    if (year === end.year && month === end.month) break;
-
-    month--;
-    if (month < 1) { month = 12; year--; }
-
-    await requestDelay();
+    return { interrupted: false, totalFiles, totalRows };
+  } finally {
+    await page.close().catch(() => {});
   }
-
-  log.endTable();
-  return { interrupted: false, totalFiles, totalRows };
 }
