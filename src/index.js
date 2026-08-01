@@ -10,6 +10,7 @@ import path from 'path';
 
 import readline from 'readline';
 import { runImport } from './importer.js';
+import { runMergeKunjungan } from './merge-kunjungan.js';
 
 dotenv.config();
 
@@ -30,11 +31,13 @@ function askAction() {
       input: process.stdin,
       output: process.stdout,
     });
-    rl.question('\nPilih mode operasi (1. EXPORT / 2. IMPORT) [default: EXPORT]: ', (answer) => {
+    rl.question('\nPilih mode operasi (1. EXPORT / 2. IMPORT / 3. MERGED KUNJUNGAN) [default: EXPORT]: ', (answer) => {
       rl.close();
       const clean = answer.trim().toUpperCase();
       if (clean === '2' || clean === 'IMPORT') {
         resolve('IMPORT');
+      } else if (clean === '3' || clean === 'MERGED KUNJUNGAN' || clean === 'MERGE_KUNJUNGAN') {
+        resolve('MERGE_KUNJUNGAN');
       } else {
         resolve('EXPORT');
       }
@@ -111,6 +114,12 @@ async function main() {
   if (action === 'IMPORT') {
     log.section('Mode: IMPORT (JSON -> SQL Generator)');
     await runImport(log);
+    log.footer();
+    process.exit(0);
+  }
+  if (action === 'MERGE_KUNJUNGAN') {
+    log.section('Mode: MERGED KUNJUNGAN (repair/backfill merge files)');
+    await runMergeKunjungan(log);
     log.footer();
     process.exit(0);
   }

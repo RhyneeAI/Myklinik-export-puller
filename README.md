@@ -1,11 +1,12 @@
 # MyPharmaExportPuller
 
-CLI-based Node.js application dengan dua mode:
+CLI-based Node.js application dengan tiga mode:
 
 - **EXPORT** — menarik data **Pendaftaran** dan **Kunjungan** dari aplikasi MyKlinik (`apps.myklinik.id`) secara otomatis via browser automation. Data di-export sebagai file Excel (`.xlsx`) dan JSON.
 - **IMPORT** — membaca hasil export JSON di atas, mencocokkannya dengan data referensi dari database (`sql-reference/*.sql`), lalu menghasilkan file SQL `INSERT`/rollback siap-pakai untuk mengisi database klinik.
+- **MERGED KUNJUNGAN** — mode perbaikan/backfill untuk file merge bulanan Kunjungan (lihat [Mode MERGED KUNJUNGAN](#mode-merged-kunjungan)).
 
-Kedua mode berdiri sendiri-sendiri dan hanya berbagi folder `output/` sebagai penghubung.
+Ketiga mode berdiri sendiri-sendiri dan hanya berbagi folder `output/` sebagai penghubung.
 
 ## Fitur
 
@@ -22,7 +23,13 @@ Kedua mode berdiri sendiri-sendiri dan hanya berbagi folder `output/` sebagai pe
 - **Fuzzy matching** — mencocokkan nama poli, dokter/perawat, kota/kecamatan/desa, agama, diagnosa (ICD-10), dan tindakan terhadap data referensi, walau penulisannya tidak persis sama
 - **Cross-reference Pendaftaran ↔ Kunjungan** — pakai nomor Register (bukan NIK/Nama) sebagai kunci utama supaya lebih akurat
 - **Rollback SQL** — setiap file `INSERT` punya pasangan `_rollback.sql` (DELETE)
+- **Output per tahun & dibatasi ukuran** — file SQL dikelompokkan ke `output/sql/{YYYY}/`, otomatis dipecah jadi `_part1.sql`, `_part2.sql`, dst. kalau lebih dari 1MB (tanpa memutus grup statement yang saling terkait)
 - **Recap report** — `import_recap.md` mencatat setiap baris yang lookup-nya gagal atau cuma cocok fuzzy (skor < 1), supaya bisa direview manual
+
+### MERGED KUNJUNGAN
+- **Pindahkan file merge yang nyasar** — kalau ada `*_merged.xlsx/json` yang masih di `output/kunjungan/{YYYY}/` (bukan di `output/kunjungan/merged/`), langsung dipindahkan
+- **Backfill merge yang terlewat** — kalau file harian satu bulan penuh sudah lengkap tapi belum pernah di-merge, dibuatkan file merge-nya
+- **Aman dijalankan berkali-kali** — bulan yang sudah beres di `merged/` dilewati begitu saja
 
 ### Umum
 - **CLI modern** — box-drawing, warna, status real-time
@@ -92,7 +99,7 @@ npm start
 Akan muncul prompt untuk memilih mode:
 
 ```
-Pilih mode operasi (1. EXPORT / 2. IMPORT) [default: EXPORT]:
+Pilih mode operasi (1. EXPORT / 2. IMPORT / 3. MERGED KUNJUNGAN) [default: EXPORT]:
 ```
 
 Untuk skrip otomatis (skip prompt), set `ACTION`:
@@ -100,6 +107,7 @@ Untuk skrip otomatis (skip prompt), set `ACTION`:
 ```bash
 ACTION=EXPORT npm start
 ACTION=IMPORT npm start
+ACTION=MERGE_KUNJUNGAN npm start
 ```
 
 ### Mode EXPORT
@@ -132,6 +140,20 @@ File referensi yang dibutuhkan di `sql-reference/` (dump tabel dari database pro
 
 **Sebelum menjalankan SQL hasil generate ke database produksi, cek dulu `output/sql/import_recap.md`** — baris yang lookup-nya gagal total (`id` jadi `0`/`NULL`) maupun yang cuma fuzzy-matched (ada skor kemiripan) tercatat di sana untuk direview manual.
 
+File SQL per periode disimpan di `output/sql/{YYYY}/`. Kalau ukuran `{YYYY}_{MM}_pendaftaran.sql` atau `_kunjungan.sql` lebih dari 1MB, otomatis dipecah jadi `..._part1.sql`, `..._part2.sql`, dst — masing-masing file tetap statement SQL yang lengkap dan bisa dijalankan sendiri-sendiri (tidak ada baris Kunjungan yang kepotong di tengah beserta diagnosa/tindakannya).
+
+### Mode MERGED KUNJUNGAN
+
+EXPORT menulis file merge bulanan Kunjungan (`{APP_TARGET}_{YYYY}_{MM}_merged.xlsx|json`) ke `output/kunjungan/merged/` di akhir setiap bulan yang selesai diproses. Mode ini memperbaiki dua situasi yang bisa membuat file merge itu hilang/salah tempat:
+
+- **File merge nyasar** — kalau proses EXPORT-nya berasal dari versi lama yang menulis file merge langsung ke `output/kunjungan/{YYYY}/`, file itu akan langsung dipindahkan ke `output/kunjungan/merged/` (bukan di-generate ulang).
+- **Belum sempat di-merge** — kalau semua file harian satu bulan sudah lengkap tapi proses sempat terputus sebelum sampai ke tahap merge, mode ini akan membuat file merge-nya dari file-file harian yang ada.
+- Bulan yang file hariannya belum lengkap akan dilewati (ditandai `SKIP`) — jalankan EXPORT lagi untuk melengkapi dulu.
+
+```bash
+ACTION=MERGE_KUNJUNGAN npm start
+```
+
 ## Struktur Output
 
 ```
@@ -146,11 +168,12 @@ output/
 │       ├── {APP_TARGET}_{YYYY}_{MM}_merged.xlsx|json      ← merge bulanan
 │       └── {APP_TARGET}_kunjungan_ALL_merged.xlsx|json    ← merge all-time
 └── sql/
-    ├── {YYYY}_{MM}_pendaftaran.sql
-    ├── {YYYY}_{MM}_pendaftaran_rollback.sql
-    ├── {YYYY}_{MM}_kunjungan.sql
-    ├── {YYYY}_{MM}_kunjungan_rollback.sql
-    └── import_recap.md
+    └── {YYYY}/
+        ├── {YYYY}_{MM}_pendaftaran.sql            (atau _part1.sql, _part2.sql, ... jika >1MB)
+        ├── {YYYY}_{MM}_pendaftaran_rollback.sql
+        ├── {YYYY}_{MM}_kunjungan.sql              (atau _part1.sql, _part2.sql, ... jika >1MB)
+        └── {YYYY}_{MM}_kunjungan_rollback.sql
+    (dan output/sql/import_recap.md di level atas)
 ```
 
 ## Catatan

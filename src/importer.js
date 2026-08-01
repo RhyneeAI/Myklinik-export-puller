@@ -38,6 +38,46 @@ function extractPeriodFromFilename(filename) {
   return match ? match[1] : null;
 }
 
+const MAX_SQL_FILE_BYTES = 1024 * 1024; // 1MB per file, split into _partN.sql beyond this
+
+// Packs statement groups into size-capped chunks without ever splitting a
+// group apart (a kunjungan row's insert + its diagnosa/tindakan all share a
+// single @kunjungan_id, so they must land in the same file/transaction).
+function chunkGroupsBySize(groups, maxBytes) {
+  const chunks = [];
+  let current = [];
+  let currentSize = 0;
+
+  for (const group of groups) {
+    const groupSize = Buffer.byteLength(group.join('\n\n'), 'utf-8') + 2;
+    if (current.length > 0 && currentSize + groupSize > maxBytes) {
+      chunks.push(current);
+      current = [];
+      currentSize = 0;
+    }
+    current.push(...group);
+    currentSize += groupSize;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+// Writes `groups` as one or more `${baseName}.sql` / `${baseName}_partN.sql`
+// files under `maxBytes`, each independently wrapped in its own transaction.
+// Returns how many files were written.
+function writeChunkedSql(dir, baseName, header, groups) {
+  const chunks = chunkGroupsBySize(groups, MAX_SQL_FILE_BYTES);
+  const multi = chunks.length > 1;
+  chunks.forEach((statements, idx) => {
+    const suffix = multi ? `_part${idx + 1}` : '';
+    const partLabel = multi ? ` (part ${idx + 1}/${chunks.length})` : '';
+    const filePath = path.join(dir, `${baseName}${suffix}.sql`);
+    const content = `-- ${header}${partLabel}\nSTART TRANSACTION;\n\n` + statements.join('\n\n') + `\n\nCOMMIT;\n`;
+    fs.writeFileSync(filePath, content, 'utf-8');
+  });
+  return chunks.length;
+}
+
 export async function runImport(log) {
   log.section('Step 1: Load SQL Reference Data');
   log.info('Parsing SQL dumps from sql-reference/...');
@@ -89,6 +129,9 @@ export async function runImport(log) {
 
   for (const period of periods) {
     const filePair = periodMap.get(period);
+    const yearDir = path.join(SQL_OUTPUT_DIR, period.slice(0, 4));
+    ensureDir(yearDir);
+
     let pendaftaranLookupMap = new Map();
     let pendaftaranNoList = [];
 
@@ -105,18 +148,17 @@ export async function runImport(log) {
         allRecapEntries.push(...resP.recapEntries);
 
         if (resP.insertSqls.length > 0) {
-          const sqlFilePath = path.join(SQL_OUTPUT_DIR, `${period}_pendaftaran.sql`);
-          const sqlContent = `-- Pendaftaran SQL for ${period}\nSTART TRANSACTION;\n\n` + resP.insertSqls.join('\n\n') + `\n\nCOMMIT;\n`;
-          fs.writeFileSync(sqlFilePath, sqlContent, 'utf-8');
+          const groups = resP.insertSqls.map((sql) => [sql]);
+          const partCount = writeChunkedSql(yearDir, `${period}_pendaftaran`, `Pendaftaran SQL for ${period}`, groups);
 
           // Rollback SQL
-          const rollbackFilePath = path.join(SQL_OUTPUT_DIR, `${period}_pendaftaran_rollback.sql`);
+          const rollbackFilePath = path.join(yearDir, `${period}_pendaftaran_rollback.sql`);
           const escapedNos = pendaftaranNoList.map((n) => "'" + n.replace(/'/g, "\\'") + "'").join(', ');
           const rollbackContent = `-- Rollback Pendaftaran for ${period}\nSTART TRANSACTION;\n\nDELETE FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos});\n\nCOMMIT;\n`;
           fs.writeFileSync(rollbackFilePath, rollbackContent, 'utf-8');
 
           totalPendaftaranSqlCount += resP.insertSqls.length;
-          log.info(`  ✓ ${period} Pendaftaran: Generated ${resP.insertSqls.length} INSERTs`);
+          log.info(`  ✓ ${period} Pendaftaran: Generated ${resP.insertSqls.length} INSERTs${partCount > 1 ? ` (${partCount} files)` : ''}`);
         }
       } catch (err) {
         log.error(`  ✕ ${period} Pendaftaran failed: ${err.message}`);
@@ -134,12 +176,10 @@ export async function runImport(log) {
         allRecapEntries.push(...resK.recapEntries);
 
         if (resK.insertSqls.length > 0) {
-          const sqlFilePath = path.join(SQL_OUTPUT_DIR, `${period}_kunjungan.sql`);
-          const sqlContent = `-- Kunjungan SQL for ${period}\nSTART TRANSACTION;\n\n` + resK.insertSqls.join('\n\n') + `\n\nCOMMIT;\n`;
-          fs.writeFileSync(sqlFilePath, sqlContent, 'utf-8');
+          const partCount = writeChunkedSql(yearDir, `${period}_kunjungan`, `Kunjungan SQL for ${period}`, resK.sqlGroups);
 
           // Rollback SQL
-          const rollbackFilePath = path.join(SQL_OUTPUT_DIR, `${period}_kunjungan_rollback.sql`);
+          const rollbackFilePath = path.join(yearDir, `${period}_kunjungan_rollback.sql`);
           let rollbackContent = `-- Rollback Kunjungan for ${period}\nSTART TRANSACTION;\n\n`;
 
           if (pendaftaranNoList.length > 0) {
@@ -155,7 +195,7 @@ export async function runImport(log) {
           fs.writeFileSync(rollbackFilePath, rollbackContent, 'utf-8');
 
           totalKunjunganSqlCount += resK.insertSqls.length;
-          log.info(`  ✓ ${period} Kunjungan: Generated ${resK.insertSqls.length} SQL statements`);
+          log.info(`  ✓ ${period} Kunjungan: Generated ${resK.insertSqls.length} SQL statements${partCount > 1 ? ` (${partCount} files)` : ''}`);
         }
       } catch (err) {
         log.error(`  ✕ ${period} Kunjungan failed: ${err.message}`);
@@ -185,6 +225,6 @@ export async function runImport(log) {
 
   log.success(`Import complete!`);
   log.info(`Total SQL statements generated: ${totalPendaftaranSqlCount + totalKunjunganSqlCount}`);
-  log.info(`SQL files and rollback scripts saved to: output/sql/`);
+  log.info(`SQL files and rollback scripts saved to: output/sql/{year}/`);
   log.info(`Recap report generated at: output/sql/import_recap.md (${allRecapEntries.length} unmatched entries)`);
 }

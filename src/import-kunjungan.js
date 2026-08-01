@@ -14,9 +14,14 @@ function escapeSqlStr(str) {
 
 export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, sourceFileName) {
   const insertSqls = [];
+  // Each row's statements (kunjungan insert + its diagnosa/tindakan, which
+  // all reference the same @kunjungan_id) must stay together as a unit when
+  // the output file later gets split by size -- so we track them as groups.
+  const sqlGroups = [];
   const recapEntries = [];
 
   for (const row of jsonRows) {
+    const rowGroup = [];
     const rawNo = row['__EMPTY'];
     const rawNama = row['__EMPTY_3'];
 
@@ -117,6 +122,7 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
 
     insertSqls.push(sqlKunjungan);
     insertSqls.push(`SET @kunjungan_id = LAST_INSERT_ID();`);
+    rowGroup.push(sqlKunjungan, `SET @kunjungan_id = LAST_INSERT_ID();`);
 
     // Additional 1: Diagnosa (__EMPTY_7 or __EMPTY_8)
     const rawKodeDiagnosa = (row['__EMPTY_7'] || '').trim();
@@ -129,6 +135,7 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
         flagIfFuzzy('diagnosa', diagnosaTarget, matched);
         const sqlDiagnosa = `INSERT INTO \`kk_pemeriksaan_diagnosa\` (\`id_kunjungan\`, \`id_kategori_penyakit\`, \`jenis_diagnosa\`, \`user\`, \`id_perusahaan\`, \`ket\`, \`created\`) VALUES (@kunjungan_id, ${matched.id}, 'Diagnosa Utama', 0, 0, 'INPUT', NOW());`;
         insertSqls.push(sqlDiagnosa);
+        rowGroup.push(sqlDiagnosa);
       } else {
         missingFields.push(`diagnosa (${diagnosaTarget})`);
       }
@@ -151,6 +158,7 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
           flagIfFuzzy('tindakan', item, matched);
           const sqlTindakan = `INSERT INTO \`kk_pemeriksaan_tindakan\` (\`id_kunjungan\`, \`id_jenis_tindakan\`, \`id_icd9\`, \`perawat\`, \`qty\`, \`user\`, \`id_perusahaan\`, \`ket\`, \`id_bayar\`, \`total_bayar\`, \`status\`, \`created\`) VALUES (@kunjungan_id, ${matched.id}, 0, 0, 1, 0, 0, 'INPUT', 0, 0, 'AKTIF', NOW());`;
           insertSqls.push(sqlTindakan);
+          rowGroup.push(sqlTindakan);
         } else {
           missingFields.push(`tindakan (${item})`);
         }
@@ -165,10 +173,13 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
         missing: missingFields.join('; '),
       });
     }
+
+    sqlGroups.push(rowGroup);
   }
 
   return {
     insertSqls,
+    sqlGroups,
     recapEntries,
   };
 }
