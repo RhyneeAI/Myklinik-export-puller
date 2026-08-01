@@ -135,6 +135,17 @@ export async function runImport(log) {
     let pendaftaranLookupMap = new Map();
     let pendaftaranNoList = [];
 
+    // Pendaftaran must be inserted (and its rollback must run) before
+    // Kunjungan, since Kunjungan's id_pendaftaran is resolved via a
+    // subquery against kk_pendaftaran. Groups/rollback text are collected
+    // here and written together as one combined pair of files per period,
+    // instead of four separate files, so there's only one thing to run.
+    const combinedGroups = [];
+    let rollbackKunjunganSql = '';
+    let rollbackPendaftaranSql = '';
+    let pendaftaranRowCount = 0;
+    let kunjunganRowCount = 0;
+
     // Process Pendaftaran
     if (filePair.pendaftaran) {
       const pFname = path.basename(filePair.pendaftaran);
@@ -148,17 +159,14 @@ export async function runImport(log) {
         allRecapEntries.push(...resP.recapEntries);
 
         if (resP.insertSqls.length > 0) {
-          const groups = resP.insertSqls.map((sql) => [sql]);
-          const partCount = writeChunkedSql(yearDir, `${period}_pendaftaran`, `Pendaftaran SQL for ${period}`, groups);
+          combinedGroups.push(...resP.insertSqls.map((sql) => [sql]));
+          pendaftaranRowCount = resP.rowCount;
+          totalPendaftaranSqlCount += resP.rowCount;
 
-          // Rollback SQL
-          const rollbackFilePath = path.join(yearDir, `${period}_pendaftaran_rollback.sql`);
           const escapedNos = pendaftaranNoList.map((n) => "'" + n.replace(/'/g, "\\'") + "'").join(', ');
-          const rollbackContent = `-- Rollback Pendaftaran for ${period}\nSTART TRANSACTION;\n\nDELETE FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos});\n\nCOMMIT;\n`;
-          fs.writeFileSync(rollbackFilePath, rollbackContent, 'utf-8');
+          rollbackPendaftaranSql = `DELETE FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos});`;
 
-          totalPendaftaranSqlCount += resP.insertSqls.length;
-          log.info(`  ✓ ${period} Pendaftaran: Generated ${resP.insertSqls.length} INSERTs${partCount > 1 ? ` (${partCount} files)` : ''}`);
+          log.info(`  ✓ ${period} Pendaftaran: ${resP.rowCount} rows (${resP.insertSqls.length} batched INSERTs)`);
         }
       } catch (err) {
         log.error(`  ✕ ${period} Pendaftaran failed: ${err.message}`);
@@ -175,30 +183,48 @@ export async function runImport(log) {
         const resK = processKunjunganRows(rows, refData, pendaftaranLookupMap, kFname);
         allRecapEntries.push(...resK.recapEntries);
 
-        if (resK.insertSqls.length > 0) {
-          const partCount = writeChunkedSql(yearDir, `${period}_kunjungan`, `Kunjungan SQL for ${period}`, resK.sqlGroups);
-
-          // Rollback SQL
-          const rollbackFilePath = path.join(yearDir, `${period}_kunjungan_rollback.sql`);
-          let rollbackContent = `-- Rollback Kunjungan for ${period}\nSTART TRANSACTION;\n\n`;
+        if (resK.sqlGroups.length > 0) {
+          combinedGroups.push(...resK.sqlGroups);
+          kunjunganRowCount = resK.sqlGroups.length;
+          totalKunjunganSqlCount += resK.insertSqls.length;
 
           if (pendaftaranNoList.length > 0) {
             const escapedNos = pendaftaranNoList.map((n) => "'" + n.replace(/'/g, "\\'") + "'").join(', ');
-            rollbackContent += `DELETE FROM \`kk_pemeriksaan_tindakan\` WHERE \`id_kunjungan\` IN (SELECT id FROM \`kk_kunjungan\` WHERE \`id_pendaftaran\` IN (SELECT id FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos})));\n`;
-            rollbackContent += `DELETE FROM \`kk_pemeriksaan_diagnosa\` WHERE \`id_kunjungan\` IN (SELECT id FROM \`kk_kunjungan\` WHERE \`id_pendaftaran\` IN (SELECT id FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos})));\n`;
-            rollbackContent += `DELETE FROM \`kk_kunjungan\` WHERE \`id_pendaftaran\` IN (SELECT id FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos}));\n`;
+            rollbackKunjunganSql =
+              `DELETE FROM \`kk_pemeriksaan_tindakan\` WHERE \`id_kunjungan\` IN (SELECT id FROM \`kk_kunjungan\` WHERE \`id_pendaftaran\` IN (SELECT id FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos})));\n` +
+              `DELETE FROM \`kk_pemeriksaan_diagnosa\` WHERE \`id_kunjungan\` IN (SELECT id FROM \`kk_kunjungan\` WHERE \`id_pendaftaran\` IN (SELECT id FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos})));\n` +
+              `DELETE FROM \`kk_kunjungan\` WHERE \`id_pendaftaran\` IN (SELECT id FROM \`kk_pendaftaran\` WHERE \`no_pendaftaran\` IN (${escapedNos}));`;
           } else {
-            rollbackContent += `-- Note: Run pendaftaran rollback first if needed\n`;
+            rollbackKunjunganSql = '-- Note: this period has no matching Pendaftaran rollback to scope the DELETE, run manually if needed';
           }
-          rollbackContent += `\nCOMMIT;\n`;
 
-          fs.writeFileSync(rollbackFilePath, rollbackContent, 'utf-8');
-
-          totalKunjunganSqlCount += resK.insertSqls.length;
-          log.info(`  ✓ ${period} Kunjungan: Generated ${resK.insertSqls.length} SQL statements${partCount > 1 ? ` (${partCount} files)` : ''}`);
+          log.info(`  ✓ ${period} Kunjungan: ${resK.sqlGroups.length} visits (${resK.insertSqls.length} statements)`);
         }
       } catch (err) {
         log.error(`  ✕ ${period} Kunjungan failed: ${err.message}`);
+      }
+    }
+
+    if (combinedGroups.length > 0) {
+      const partCount = writeChunkedSql(
+        yearDir,
+        period,
+        `Pendaftaran (${pendaftaranRowCount} rows) + Kunjungan (${kunjunganRowCount} visits) SQL for ${period}`,
+        combinedGroups
+      );
+
+      const rollbackParts = [rollbackKunjunganSql, rollbackPendaftaranSql].filter(Boolean);
+      if (rollbackParts.length > 0) {
+        const rollbackFilePath = path.join(yearDir, `${period}_rollback.sql`);
+        const rollbackContent =
+          `-- Rollback for ${period} (Kunjungan first, then Pendaftaran)\nSTART TRANSACTION;\n\n` +
+          rollbackParts.join('\n\n') +
+          `\n\nCOMMIT;\n`;
+        fs.writeFileSync(rollbackFilePath, rollbackContent, 'utf-8');
+      }
+
+      if (partCount > 1) {
+        log.info(`  ℹ ${period}: split into ${partCount} files (>1MB)`);
       }
     }
 

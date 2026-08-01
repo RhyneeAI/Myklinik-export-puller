@@ -22,9 +22,10 @@ Ketiga mode berdiri sendiri-sendiri dan hanya berbagi folder `output/` sebagai p
 ### IMPORT
 - **Fuzzy matching** — mencocokkan nama poli, dokter/perawat, kota/kecamatan/desa, agama, diagnosa (ICD-10), dan tindakan terhadap data referensi, walau penulisannya tidak persis sama
 - **Cross-reference Pendaftaran ↔ Kunjungan** — pakai nomor Register (bukan NIK/Nama) sebagai kunci utama supaya lebih akurat
-- **Rollback SQL** — setiap file `INSERT` punya pasangan `_rollback.sql` (DELETE)
+- **Batch INSERT** — baris Pendaftaran digabung sampai 500 baris per statement `INSERT ... VALUES (...), (...), ...`; tindakan per kunjungan juga digabung — jauh lebih sedikit statement dibanding satu `INSERT` per baris
+- **Satu file per periode** — SQL Pendaftaran + Kunjungan (dan rollback-nya) digabung jadi satu file masing-masing, bukan file terpisah per jenis
 - **Output per tahun & dibatasi ukuran** — file SQL dikelompokkan ke `output/sql/{YYYY}/`, otomatis dipecah jadi `_part1.sql`, `_part2.sql`, dst. kalau lebih dari 1MB (tanpa memutus grup statement yang saling terkait)
-- **Recap report** — `import_recap.md` mencatat setiap baris yang lookup-nya gagal atau cuma cocok fuzzy (skor < 1), supaya bisa direview manual
+- **Recap report** — `import_recap.md` mencatat setiap baris yang lookup-nya gagal (termasuk kandidat terdekat kalau skornya terlalu rendah untuk dipakai) atau fuzzy-match dengan skor 0.55–0.95, supaya bisa direview manual. Fuzzy match yang sangat yakin (skor >0.95) tidak dicatat karena hampir pasti benar
 
 ### MERGED KUNJUNGAN
 - **Pindahkan file merge yang nyasar** — kalau ada `*_merged.xlsx/json` yang masih di `output/kunjungan/{YYYY}/` (bukan di `output/kunjungan/merged/`), langsung dipindahkan
@@ -132,7 +133,7 @@ Membaca semua file JSON di `output/pendaftaran/**` dan `output/kunjungan/**` (ut
 1. Parse data referensi dari `sql-reference/*.sql` (dump `INSERT` gaya phpMyAdmin — bukan koneksi database langsung)
 2. Kelompokkan file per periode (`YYYY_MM`), diproses dari periode terbaru ke terlama
 3. Cocokkan setiap baris ke tabel referensi (poli, dokter/perawat, agama, kota/kecamatan/desa, diagnosa ICD-10, tindakan) — exact match dulu, baru fuzzy match kalau tidak persis sama
-4. Generate SQL `INSERT` + `_rollback.sql` per periode, plus `import_recap.md`
+4. Generate satu file `{YYYY}_{MM}.sql` berisi INSERT Pendaftaran (batched) lalu Kunjungan, satu file `{YYYY}_{MM}_rollback.sql` (urutan dibalik: Kunjungan dulu baru Pendaftaran, karena rollback Kunjungan masih butuh baris Pendaftaran ada), plus `import_recap.md`
 
 File referensi yang dibutuhkan di `sql-reference/` (dump tabel dari database produksi, bukan file ini yang menyimpan data — hanya dipakai sebagai lookup):
 
@@ -140,7 +141,7 @@ File referensi yang dibutuhkan di `sql-reference/` (dump tabel dari database pro
 
 **Sebelum menjalankan SQL hasil generate ke database produksi, cek dulu `output/sql/import_recap.md`** — baris yang lookup-nya gagal total (`id` jadi `0`/`NULL`) maupun yang cuma fuzzy-matched (ada skor kemiripan) tercatat di sana untuk direview manual.
 
-File SQL per periode disimpan di `output/sql/{YYYY}/`. Kalau ukuran `{YYYY}_{MM}_pendaftaran.sql` atau `_kunjungan.sql` lebih dari 1MB, otomatis dipecah jadi `..._part1.sql`, `..._part2.sql`, dst — masing-masing file tetap statement SQL yang lengkap dan bisa dijalankan sendiri-sendiri (tidak ada baris Kunjungan yang kepotong di tengah beserta diagnosa/tindakannya).
+File SQL per periode disimpan di `output/sql/{YYYY}/{YYYY}_{MM}.sql` (Pendaftaran + Kunjungan digabung, INSERT Pendaftaran di-batch sampai 500 baris per statement). Kalau ukurannya lebih dari 1MB, otomatis dipecah jadi `..._part1.sql`, `..._part2.sql`, dst — masing-masing file tetap satu unit transaksi yang lengkap dan bisa dijalankan sendiri-sendiri (tidak ada baris Kunjungan yang kepotong di tengah beserta diagnosa/tindakannya, dan urutan Pendaftaran-sebelum-Kunjungan selalu terjaga antar bagian).
 
 ### Mode MERGED KUNJUNGAN
 
@@ -169,10 +170,8 @@ output/
 │       └── {APP_TARGET}_kunjungan_ALL_merged.xlsx|json    ← merge all-time
 └── sql/
     └── {YYYY}/
-        ├── {YYYY}_{MM}_pendaftaran.sql            (atau _part1.sql, _part2.sql, ... jika >1MB)
-        ├── {YYYY}_{MM}_pendaftaran_rollback.sql
-        ├── {YYYY}_{MM}_kunjungan.sql              (atau _part1.sql, _part2.sql, ... jika >1MB)
-        └── {YYYY}_{MM}_kunjungan_rollback.sql
+        ├── {YYYY}_{MM}.sql               (Pendaftaran batched + Kunjungan; atau _part1.sql, _part2.sql, ... jika >1MB)
+        └── {YYYY}_{MM}_rollback.sql      (Kunjungan lalu Pendaftaran)
     (dan output/sql/import_recap.md di level atas)
 ```
 

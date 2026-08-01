@@ -127,10 +127,12 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
       }
     }
 
-    // Additional 2: Tindakan (__EMPTY_9)
+    // Additional 2: Tindakan (__EMPTY_9). A visit can have several, and they
+    // all share the same @kunjungan_id, so they're batched into one INSERT.
     const rawTindakan = (row['__EMPTY_9'] || '').trim();
     if (rawTindakan) {
       const items = rawTindakan.split('\n').map((s) => s.trim()).filter(Boolean);
+      const tindakanTuples = [];
       for (const item of items) {
         // "Pemeriksaan Dokter Umum" is billed per-doctor in the reference
         // (e.g. "Pemeriksaan Dokter Umum [dr. Catherine]"), but the visit
@@ -141,10 +143,13 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
           : item;
         const matched = recordMatch('tindakan', item, findMatchingTindakan(refData, searchText));
         if (matched) {
-          const sqlTindakan = `INSERT INTO \`kk_pemeriksaan_tindakan\` (\`id_kunjungan\`, \`id_jenis_tindakan\`, \`id_icd9\`, \`perawat\`, \`qty\`, \`user\`, \`id_perusahaan\`, \`ket\`, \`id_bayar\`, \`total_bayar\`, \`status\`, \`created\`) VALUES (@kunjungan_id, ${matched.id}, 0, 0, 1, 0, 0, 'INPUT', 0, 0, 'AKTIF', NOW());`;
-          insertSqls.push(sqlTindakan);
-          rowGroup.push(sqlTindakan);
+          tindakanTuples.push(`(@kunjungan_id, ${matched.id}, 0, 0, 1, 0, 0, 'INPUT', 0, 0, 'AKTIF', NOW())`);
         }
+      }
+      if (tindakanTuples.length > 0) {
+        const sqlTindakan = `INSERT INTO \`kk_pemeriksaan_tindakan\` (\`id_kunjungan\`, \`id_jenis_tindakan\`, \`id_icd9\`, \`perawat\`, \`qty\`, \`user\`, \`id_perusahaan\`, \`ket\`, \`id_bayar\`, \`total_bayar\`, \`status\`, \`created\`) VALUES\n${tindakanTuples.join(',\n')};`;
+        insertSqls.push(sqlTindakan);
+        rowGroup.push(sqlTindakan);
       }
     }
 

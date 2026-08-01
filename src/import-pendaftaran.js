@@ -34,8 +34,23 @@ function escapeSqlStr(str) {
   return "'" + String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
 }
 
+const PENDAFTARAN_COLUMNS = '`nama`, `no_pendaftaran`, `no_register_keluarga`, `jenis_pasien`, `tanggal`, `jam`, `no_identitas`, `pendidikan`, `jenis_kelamin`, `gol_darah`, `bantuan_pemerintah`, `kelas_bpjs`, `hub_keluarga_peserta`, `prolanis`, `prb`, `agama`, `tanggal_lahir`, `place_of_birth`, `telpon`, `kota`, `kecamatan`, `desa`, `alamat`, `nomor_status`, `terakhir_ubah_identitas`, `ket`, `user`, `id_perusahaan`, `created`, `hash_id`';
+
+// Rows with no id-linkage dependency between them, so they can safely be
+// packed many-per-statement instead of one INSERT per row.
+const BATCH_SIZE = 500;
+
+function batchInserts(table, columns, valueTuples, batchSize = BATCH_SIZE) {
+  const statements = [];
+  for (let i = 0; i < valueTuples.length; i += batchSize) {
+    const chunk = valueTuples.slice(i, i + batchSize);
+    statements.push(`INSERT INTO \`${table}\` (${columns}) VALUES\n${chunk.join(',\n')};`);
+  }
+  return statements;
+}
+
 export function processPendaftaranRows(jsonRows, refData, sourceFileName) {
-  const insertSqls = [];
+  const valueTuples = [];
   const noPendaftaranList = [];
   const recapEntries = [];
   const pendaftaranLookupMap = new Map(); // nik or nama -> pendaftaran row data
@@ -137,13 +152,16 @@ export function processPendaftaranRows(jsonRows, refData, sourceFileName) {
       pendaftaranLookupMap.set(`NAMA:${nama}`, recordMeta);
     }
 
-    const sql = `INSERT INTO \`kk_pendaftaran\` (\`nama\`, \`no_pendaftaran\`, \`no_register_keluarga\`, \`jenis_pasien\`, \`tanggal\`, \`jam\`, \`no_identitas\`, \`pendidikan\`, \`jenis_kelamin\`, \`gol_darah\`, \`bantuan_pemerintah\`, \`kelas_bpjs\`, \`hub_keluarga_peserta\`, \`prolanis\`, \`prb\`, \`agama\`, \`tanggal_lahir\`, \`place_of_birth\`, \`telpon\`, \`kota\`, \`kecamatan\`, \`desa\`, \`alamat\`, \`nomor_status\`, \`terakhir_ubah_identitas\`, \`ket\`, \`user\`, \`id_perusahaan\`, \`created\`, \`hash_id\`) VALUES (${escapeSqlStr(nama)}, ${escapeSqlStr(noPendaftaran)}, '', ${escapeSqlStr(jenisPasien)}, ${escapeSqlStr(tanggal)}, ${escapeSqlStr(jam)}, ${escapeSqlStr(noIdentitas)}, '', ${escapeSqlStr(jkCode)}, '', 'TIDAK', '', '', '', '', ${agamaId}, ${escapeSqlStr(tanggalLahir)}, ${escapeSqlStr(placeOfBirth)}, ${escapeSqlStr(telpon)}, ${kotaObj ? kotaObj.id : 'NULL'}, ${kecObj ? kecObj.id : 'NULL'}, ${desaObj ? desaObj.id : 'NULL'}, ${escapeSqlStr(alamat)}, ${escapeSqlStr(nomorStatus)}, NOW(), 'INPUT', 0, 0, NOW(), '');`;
+    const tuple = `(${escapeSqlStr(nama)}, ${escapeSqlStr(noPendaftaran)}, '', ${escapeSqlStr(jenisPasien)}, ${escapeSqlStr(tanggal)}, ${escapeSqlStr(jam)}, ${escapeSqlStr(noIdentitas)}, '', ${escapeSqlStr(jkCode)}, '', 'TIDAK', '', '', '', '', ${agamaId}, ${escapeSqlStr(tanggalLahir)}, ${escapeSqlStr(placeOfBirth)}, ${escapeSqlStr(telpon)}, ${kotaObj ? kotaObj.id : 'NULL'}, ${kecObj ? kecObj.id : 'NULL'}, ${desaObj ? desaObj.id : 'NULL'}, ${escapeSqlStr(alamat)}, ${escapeSqlStr(nomorStatus)}, NOW(), 'INPUT', 0, 0, NOW(), '')`;
 
-    insertSqls.push(sql);
+    valueTuples.push(tuple);
   }
+
+  const insertSqls = batchInserts('kk_pendaftaran', PENDAFTARAN_COLUMNS, valueTuples);
 
   return {
     insertSqls,
+    rowCount: valueTuples.length,
     noPendaftaranList,
     recapEntries,
     pendaftaranLookupMap,
