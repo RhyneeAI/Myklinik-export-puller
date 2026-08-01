@@ -8,6 +8,9 @@ import { processKunjungan } from './kunjungan.js';
 import fs from 'fs';
 import path from 'path';
 
+import readline from 'readline';
+import { runImport } from './importer.js';
+
 dotenv.config();
 
 const {
@@ -17,6 +20,27 @@ const {
   END_DATE,
   MODE = 'all',
 } = process.env;
+
+function askAction() {
+  return new Promise((resolve) => {
+    if (process.env.ACTION) {
+      return resolve(process.env.ACTION.toUpperCase());
+    }
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    rl.question('\nPilih mode operasi (1. EXPORT / 2. IMPORT) [default: EXPORT]: ', (answer) => {
+      rl.close();
+      const clean = answer.trim().toUpperCase();
+      if (clean === '2' || clean === 'IMPORT') {
+        resolve('IMPORT');
+      } else {
+        resolve('EXPORT');
+      }
+    });
+  });
+}
 
 function verifyFiles(log, start, end, mode) {
   log.section('Verification');
@@ -82,6 +106,14 @@ function verifyFiles(log, start, end, mode) {
 async function main() {
   const log = createLogger('MyPharmaExportPuller', '1.0.0');
   log.header(APP_TARGET, MODE);
+
+  const action = await askAction();
+  if (action === 'IMPORT') {
+    log.section('Mode: IMPORT (JSON -> SQL Generator)');
+    await runImport(log);
+    log.footer();
+    process.exit(0);
+  }
 
   let startStr = START_DATE;
   let endStr = END_DATE;
