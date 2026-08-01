@@ -158,6 +158,17 @@ export async function processKunjungan(log, progress, context) {
   let month = start.month;
   const allPeriodRows = [];
 
+  let totalDays = 0;
+  {
+    let y = start.year, m = start.month;
+    while (y > end.year || (y === end.year && m >= end.month)) {
+      totalDays += getDaysInMonth(y, m);
+      m--;
+      if (m < 1) { m = 12; y--; }
+    }
+  }
+  let dayIndex = 0;
+
   let page = await context.newPage();
 
   try {
@@ -172,6 +183,8 @@ export async function processKunjungan(log, progress, context) {
         const cursor = progress.kunjungan.cursor;
         if (shouldSkipDate(cursor, year, month, day)) {
           totalSkipped++;
+          dayIndex++;
+          log.progressBar(dayIndex, totalDays, label);
           continue;
         }
 
@@ -248,6 +261,9 @@ export async function processKunjungan(log, progress, context) {
           log.error(`  ${label}  Failed after ${maxRetries} retries`);
           return { interrupted: true, reason: `Failed at ${label} after retries` };
         }
+
+        dayIndex++;
+        log.progressBar(dayIndex, totalDays, label);
 
         await requestDelay();
       }

@@ -127,7 +127,7 @@ export async function runImport(log) {
 
   log.section('Step 3: Generating SQL & Rollback Scripts');
 
-  for (const period of periods) {
+  for (const [periodIdx, period] of periods.entries()) {
     const filePair = periodMap.get(period);
     const yearDir = path.join(SQL_OUTPUT_DIR, period.slice(0, 4));
     ensureDir(yearDir);
@@ -201,6 +201,8 @@ export async function runImport(log) {
         log.error(`  ✕ ${period} Kunjungan failed: ${err.message}`);
       }
     }
+
+    log.progressBar(periodIdx + 1, periods.length, period);
   }
 
   log.section('Step 4: Summary & Recap Report');

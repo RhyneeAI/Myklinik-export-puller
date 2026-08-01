@@ -87,7 +87,7 @@ export async function runMergeKunjungan(log) {
     { label: 'Info', width: 32 },
   ]);
 
-  for (const period of sortedPeriods) {
+  for (const [periodIdx, period] of sortedPeriods.entries()) {
     const [y, m] = period.split('_').map(Number);
     const mergedJsonPath = path.join(mergedDir, `${APP_TARGET}_${period}_merged.json`);
     const mergedXlsxPath = path.join(mergedDir, `${APP_TARGET}_${period}_merged.xlsx`);
@@ -96,6 +96,7 @@ export async function runMergeKunjungan(log) {
     if (fs.existsSync(mergedJsonPath) && fs.existsSync(mergedXlsxPath)) {
       alreadyOk++;
       log.tableRow([period, 'OK', 'sudah ada di kunjungan/merged']);
+      log.progressBar(periodIdx + 1, sortedPeriods.length, period);
       continue;
     }
 
@@ -104,6 +105,7 @@ export async function runMergeKunjungan(log) {
       fs.renameSync(entry.misplacedMerged.xlsx, mergedXlsxPath);
       moved++;
       log.tableRow([period, 'MOVED', 'dipindah dari folder tahun']);
+      log.progressBar(periodIdx + 1, sortedPeriods.length, period);
       continue;
     }
 
@@ -111,6 +113,7 @@ export async function runMergeKunjungan(log) {
     if (entry.days.size < expectedDays) {
       incomplete++;
       log.tableRow([period, 'SKIP', `baru ${entry.days.size}/${expectedDays} hari, belum lengkap`]);
+      log.progressBar(periodIdx + 1, sortedPeriods.length, period);
       continue;
     }
 
@@ -135,6 +138,7 @@ export async function runMergeKunjungan(log) {
 
     merged++;
     log.tableRow([period, 'MERGED', `${allRows.length} rows dari ${entry.days.size} file harian`]);
+    log.progressBar(periodIdx + 1, sortedPeriods.length, period);
   }
 
   log.endTable();

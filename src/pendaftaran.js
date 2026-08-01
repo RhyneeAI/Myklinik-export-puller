@@ -171,6 +171,9 @@ export async function processPendaftaran(log, progress, context) {
   let month = start.month;
   const allPeriodRows = [];
 
+  const totalMonths = (start.year - end.year) * 12 + (start.month - end.month) + 1;
+  let monthIndex = 0;
+
   log.startTable([
     { label: 'Period', width: 10 },
     { label: 'Status', width: 8 },
@@ -192,6 +195,8 @@ export async function processPendaftaran(log, progress, context) {
         const cmp = `${year}_${String(month).padStart(2, '0')}`;
         if (cmp >= cursorLabel) {
           log.tableRow([dim(period), yellow('SKIP'), dim('-'), dim(fname)]);
+          monthIndex++;
+          log.progressBar(monthIndex, totalMonths, period);
           month--;
           if (month < 1) { month = 12; year--; }
           continue;
@@ -280,6 +285,9 @@ export async function processPendaftaran(log, progress, context) {
         log.error(`${period}  Failed after ${maxRetries} retries`);
         return { interrupted: true, reason: `Failed at ${period} after retries` };
       }
+
+      monthIndex++;
+      log.progressBar(monthIndex, totalMonths, period);
 
       if (year === end.year && month === end.month) break;
 
