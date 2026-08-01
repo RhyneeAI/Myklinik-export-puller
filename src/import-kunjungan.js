@@ -42,14 +42,25 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
 
     const missingFields = [];
 
-    // A fuzzy (non-exact) match still resolves the id, but is flagged for
-    // manual review since it's a best-effort guess, not a confirmed match.
-    // Very high-confidence fuzzy matches (>0.95, e.g. just a punctuation/
-    // casing difference) aren't worth a human's time, so they're left out.
-    const flagIfFuzzy = (label, raw, match) => {
-      if (match && !match.exact && match.score <= 0.95) {
+    // Logs a recap entry as needed and returns the match if (and only if)
+    // it's safe to use in the generated SQL:
+    //  - no candidate at all              -> "field (raw)"
+    //  - candidate too weak to apply      -> "field (raw -> closest: X, score, TIDAK DIPAKAI)", id NOT used
+    //  - applied but not exact, score<=.95 -> "field (raw -> X, score)", id used
+    //  - applied and (exact or score>.95)  -> silent, id used
+    const recordMatch = (label, raw, match) => {
+      if (!match) {
+        missingFields.push(`${label} (${raw})`);
+        return null;
+      }
+      if (!match.applied) {
+        missingFields.push(`${label} (${raw} -> closest: ${match.label}, score ${match.score.toFixed(2)}, TIDAK DIPAKAI)`);
+        return null;
+      }
+      if (!match.exact && match.score <= 0.95) {
         missingFields.push(`${label} (${raw} -> ${match.label}, score ${match.score.toFixed(2)})`);
       }
+      return match;
     };
 
     // `Register` is the same number in both Pendaftaran and Kunjungan exports,
@@ -70,42 +81,18 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
     // coarse category (RAWAT JALAN / PENUNJANG), not a poli name -- the real
     // poli lives on the matching Pendaftaran row, so we cross-reference it.
     const rawPoli = isPlaceholder(pendaftaranMeta?.poliVal) ? '' : (pendaftaranMeta?.poliVal || '').trim();
-    let idLayanan = 0;
-    if (rawPoli) {
-      const matched = findMatchingPoli(refData, rawPoli);
-      if (matched) {
-        idLayanan = matched.id;
-        flagIfFuzzy('layanan', rawPoli, matched);
-      } else {
-        missingFields.push(`layanan (${rawPoli})`);
-      }
-    }
+    const poliMatch = rawPoli ? recordMatch('layanan', rawPoli, findMatchingPoli(refData, rawPoli)) : null;
+    const idLayanan = poliMatch ? poliMatch.id : 0;
 
     // Match Dokter
     const rawDokter = isPlaceholder(row['__EMPTY_6']) ? '' : (row['__EMPTY_6'] || '').trim();
-    let idDokter = 0;
-    if (rawDokter) {
-      const matched = findMatchingUser(refData, rawDokter);
-      if (matched) {
-        idDokter = matched.id;
-        flagIfFuzzy('dokter', rawDokter, matched);
-      } else {
-        missingFields.push(`dokter (${rawDokter})`);
-      }
-    }
+    const dokterMatch = rawDokter ? recordMatch('dokter', rawDokter, findMatchingUser(refData, rawDokter)) : null;
+    const idDokter = dokterMatch ? dokterMatch.id : 0;
 
     // Match User (Perawat from Pendaftaran)
-    let idUser = 0;
     const perawatName = isPlaceholder(pendaftaranMeta?.perawatVal) ? '' : (pendaftaranMeta?.perawatVal || '');
-    if (perawatName) {
-      const matched = findMatchingUser(refData, perawatName);
-      if (matched) {
-        idUser = matched.id;
-        flagIfFuzzy('user perawat', perawatName, matched);
-      } else {
-        missingFields.push(`user perawat (${perawatName})`);
-      }
-    }
+    const perawatMatch = perawatName ? recordMatch('user perawat', perawatName, findMatchingUser(refData, perawatName)) : null;
+    const idUser = perawatMatch ? perawatMatch.id : 0;
 
     // Subquery for id_pendaftaran
     const whereConds = [];
@@ -132,14 +119,11 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
     const diagnosaTarget = rawKodeDiagnosa || rawNamaDiagnosa;
 
     if (diagnosaTarget) {
-      const matched = findMatchingDiagnosa(refData, diagnosaTarget);
+      const matched = recordMatch('diagnosa', diagnosaTarget, findMatchingDiagnosa(refData, diagnosaTarget));
       if (matched) {
-        flagIfFuzzy('diagnosa', diagnosaTarget, matched);
         const sqlDiagnosa = `INSERT INTO \`kk_pemeriksaan_diagnosa\` (\`id_kunjungan\`, \`id_kategori_penyakit\`, \`jenis_diagnosa\`, \`user\`, \`id_perusahaan\`, \`ket\`, \`created\`) VALUES (@kunjungan_id, ${matched.id}, 'Diagnosa Utama', 0, 0, 'INPUT', NOW());`;
         insertSqls.push(sqlDiagnosa);
         rowGroup.push(sqlDiagnosa);
-      } else {
-        missingFields.push(`diagnosa (${diagnosaTarget})`);
       }
     }
 
@@ -155,14 +139,11 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
         const searchText = /^PEMERIKSAAN DOKTER UMUM/i.test(item) && rawDokter
           ? `${item} [${rawDokter}]`
           : item;
-        const matched = findMatchingTindakan(refData, searchText);
+        const matched = recordMatch('tindakan', item, findMatchingTindakan(refData, searchText));
         if (matched) {
-          flagIfFuzzy('tindakan', item, matched);
           const sqlTindakan = `INSERT INTO \`kk_pemeriksaan_tindakan\` (\`id_kunjungan\`, \`id_jenis_tindakan\`, \`id_icd9\`, \`perawat\`, \`qty\`, \`user\`, \`id_perusahaan\`, \`ket\`, \`id_bayar\`, \`total_bayar\`, \`status\`, \`created\`) VALUES (@kunjungan_id, ${matched.id}, 0, 0, 1, 0, 0, 'INPUT', 0, 0, 'AKTIF', NOW());`;
           insertSqls.push(sqlTindakan);
           rowGroup.push(sqlTindakan);
-        } else {
-          missingFields.push(`tindakan (${item})`);
         }
       }
     }

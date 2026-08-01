@@ -69,55 +69,43 @@ export function processPendaftaranRows(jsonRows, refData, sourceFileName) {
 
     const missingFields = [];
 
-    // A fuzzy (non-exact) match still resolves the id, but is flagged for
-    // manual review since it's a best-effort guess, not a confirmed match.
-    // Very high-confidence fuzzy matches (>0.95, e.g. just a punctuation/
-    // casing difference) aren't worth a human's time, so they're left out.
-    const flagIfFuzzy = (label, raw, match) => {
-      if (match && !match.exact && match.score <= 0.95) {
+    // Logs a recap entry as needed and returns the match if (and only if)
+    // it's safe to use in the generated SQL:
+    //  - no candidate at all              -> "field (raw)"
+    //  - candidate too weak to apply      -> "field (raw -> closest: X, score, TIDAK DIPAKAI)", id NOT used
+    //  - applied but not exact, score<=.95 -> "field (raw -> X, score)", id used
+    //  - applied and (exact or score>.95)  -> silent, id used
+    const recordMatch = (label, raw, match) => {
+      if (!match) {
+        missingFields.push(`${label} (${raw})`);
+        return null;
+      }
+      if (!match.applied) {
+        missingFields.push(`${label} (${raw} -> closest: ${match.label}, score ${match.score.toFixed(2)}, TIDAK DIPAKAI)`);
+        return null;
+      }
+      if (!match.exact && match.score <= 0.95) {
         missingFields.push(`${label} (${raw} -> ${match.label}, score ${match.score.toFixed(2)})`);
       }
+      return match;
     };
 
     // Match Agama
     const rawAgama = (row['__EMPTY_6'] || '').trim();
-    let agamaId = 0;
-    if (rawAgama) {
-      const matched = findMatchingAgama(refData, rawAgama);
-      if (matched) {
-        agamaId = matched.id;
-        flagIfFuzzy('agama', rawAgama, matched);
-      } else {
-        missingFields.push(`agama (${rawAgama})`);
-      }
-    }
+    const agamaMatch = rawAgama ? recordMatch('agama', rawAgama, findMatchingAgama(refData, rawAgama)) : null;
+    const agamaId = agamaMatch ? agamaMatch.id : 0;
 
     // Match Kota
     const rawKota = isPlaceholder(row['__EMPTY_14']) ? '' : (row['__EMPTY_14'] || '').trim();
-    let kotaObj = null;
-    if (rawKota) {
-      kotaObj = findMatchingKota(refData, rawKota);
-      if (kotaObj) flagIfFuzzy('kota', rawKota, kotaObj);
-      else missingFields.push(`kota (${rawKota})`);
-    }
+    const kotaObj = rawKota ? recordMatch('kota', rawKota, findMatchingKota(refData, rawKota)) : null;
 
     // Match Kecamatan
     const rawKec = isPlaceholder(row['__EMPTY_13']) ? '' : (row['__EMPTY_13'] || '').trim();
-    let kecObj = null;
-    if (rawKec) {
-      kecObj = findMatchingKecamatan(refData, rawKec);
-      if (kecObj) flagIfFuzzy('kecamatan', rawKec, kecObj);
-      else missingFields.push(`kecamatan (${rawKec})`);
-    }
+    const kecObj = rawKec ? recordMatch('kecamatan', rawKec, findMatchingKecamatan(refData, rawKec)) : null;
 
     // Match Desa
     const rawDesa = isPlaceholder(row['__EMPTY_12']) ? '' : (row['__EMPTY_12'] || '').trim();
-    let desaObj = null;
-    if (rawDesa) {
-      desaObj = findMatchingDesa(refData, rawDesa);
-      if (desaObj) flagIfFuzzy('desa', rawDesa, desaObj);
-      else missingFields.push(`desa (${rawDesa})`);
-    }
+    const desaObj = rawDesa ? recordMatch('desa', rawDesa, findMatchingDesa(refData, rawDesa)) : null;
 
     // Handle place_of_birth
     let placeOfBirth = rawPob;

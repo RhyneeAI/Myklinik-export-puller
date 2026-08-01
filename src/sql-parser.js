@@ -286,11 +286,14 @@ export function loadSqlReferenceData(sqlRefDir) {
 }
 
 // ─── Matching Helpers ───────────────────────────────────────────
-// Every findMatching* returns either null (nothing usable found) or
-// { id, label, score, exact } — score is 1 for a normalized exact match,
-// otherwise a 0..1 Dice-coefficient similarity for the closest candidate
-// that cleared FUZZY_THRESHOLD. Callers decide whether to still flag
-// non-exact matches in the recap for manual review.
+// Every findMatching* returns either null (no candidates existed at all) or
+// { id, label, score, exact, applied } — score is 1 for a normalized exact
+// match, otherwise a 0..1 Dice-coefficient similarity for the single closest
+// candidate, whether or not it cleared FUZZY_THRESHOLD. `applied` says
+// whether `id` is safe to use in generated SQL: true for exact matches and
+// fuzzy matches that cleared the threshold; false means the candidate is
+// only there to help a human figure out what the raw value should map to --
+// `id` should NOT be used in that case (callers use 0/NULL instead).
 
 const FUZZY_THRESHOLD = 0.55;
 
@@ -340,6 +343,9 @@ function diceCoefficient(a, b) {
   return (2 * matches) / (bgA.length + bgB.length);
 }
 
+// Finds the single closest candidate regardless of FUZZY_THRESHOLD -- the
+// threshold is applied by callers (it decides `applied`, not whether a
+// candidate is returned at all).
 function bestFuzzyMatch(candidates, targetLoose, getLoose) {
   let best = null;
   let bestScore = 0;
@@ -350,7 +356,7 @@ function bestFuzzyMatch(candidates, targetLoose, getLoose) {
       best = c;
     }
   }
-  return best && bestScore >= FUZZY_THRESHOLD ? { item: best, score: bestScore } : null;
+  return best ? { item: best, score: bestScore } : null;
 }
 
 function buildTightIndex(list, getLoose) {
@@ -375,7 +381,7 @@ export function findMatchingAgama(ref, agamaStr) {
   if (!agamaStr) return null;
   const clean = normalizeLoose(agamaStr);
   if (ref.kategoriAgama[clean] != null) {
-    return { id: ref.kategoriAgama[clean], label: clean, score: 1, exact: true };
+    return { id: ref.kategoriAgama[clean], label: clean, score: 1, exact: true, applied: true };
   }
   let best = null;
   let bestScore = 0;
@@ -386,20 +392,20 @@ export function findMatchingAgama(ref, agamaStr) {
       best = { k, id };
     }
   }
-  if (best && bestScore >= FUZZY_THRESHOLD) {
-    return { id: best.id, label: best.k, score: bestScore, exact: false };
-  }
-  return null;
+  if (!best) return null;
+  const applied = bestScore >= FUZZY_THRESHOLD;
+  return { id: best.id, label: best.k, score: bestScore, exact: false, applied };
 }
 
 function matchLocation(list, tightIndex, raw) {
   if (!raw) return null;
   const loose = stripAdminPrefix(normalizeLoose(raw));
   const exact = tightIndex.get(tightKey(loose));
-  if (exact) return { id: exact.id, label: exact.nama, score: 1, exact: true };
+  if (exact) return { id: exact.id, label: exact.nama, score: 1, exact: true, applied: true };
   const best = bestFuzzyMatch(list, loose, (it) => stripAdminPrefix(it.nama));
-  if (best) return { id: best.item.id, label: best.item.nama, score: best.score, exact: false };
-  return null;
+  if (!best) return null;
+  const applied = best.score >= FUZZY_THRESHOLD;
+  return { id: best.item.id, label: best.item.nama, score: best.score, exact: false, applied };
 }
 
 export function findMatchingKota(ref, kotaStr) {
@@ -418,10 +424,11 @@ export function findMatchingPoli(ref, poliStr) {
   if (!poliStr) return null;
   const loose = normalizeLoose(poliStr);
   const exact = ref.poliByTight.get(tightKey(loose));
-  if (exact) return { id: exact.id, label: exact.nama, score: 1, exact: true };
+  if (exact) return { id: exact.id, label: exact.nama, score: 1, exact: true, applied: true };
   const best = bestFuzzyMatch(ref.poli, loose, (it) => it.nama);
-  if (best) return { id: best.item.id, label: best.item.nama, score: best.score, exact: false };
-  return null;
+  if (!best) return null;
+  const applied = best.score >= FUZZY_THRESHOLD;
+  return { id: best.item.id, label: best.item.nama, score: best.score, exact: false, applied };
 }
 
 export function findMatchingUser(ref, nameStr) {
@@ -429,7 +436,7 @@ export function findMatchingUser(ref, nameStr) {
   const loose = stripGelar(normalizeLoose(nameStr));
   const exact = ref.usersByTight.get(tightKey(loose));
   if (exact) {
-    return { id: exact.id, label: exact.nama_lengkap || exact.nama_panggilan, score: 1, exact: true };
+    return { id: exact.id, label: exact.nama_lengkap || exact.nama_panggilan, score: 1, exact: true, applied: true };
   }
   let best = null;
   let bestScore = 0;
@@ -443,10 +450,9 @@ export function findMatchingUser(ref, nameStr) {
       }
     }
   }
-  if (best && bestScore >= FUZZY_THRESHOLD) {
-    return { id: best.id, label: best.nama_lengkap || best.nama_panggilan, score: bestScore, exact: false };
-  }
-  return null;
+  if (!best) return null;
+  const applied = bestScore >= FUZZY_THRESHOLD;
+  return { id: best.id, label: best.nama_lengkap || best.nama_panggilan, score: bestScore, exact: false, applied };
 }
 
 export function findMatchingDiagnosa(ref, kodeOrNama) {
@@ -456,20 +462,22 @@ export function findMatchingDiagnosa(ref, kodeOrNama) {
   const byKode = ref.kategoriPenyakit.find(
     (d) => d.kode === clean || d.kode.replace(/\.$/, '') === cleanNoDot
   );
-  if (byKode) return { id: byKode.id, label: byKode.kode, score: 1, exact: true };
+  if (byKode) return { id: byKode.id, label: byKode.kode, score: 1, exact: true, applied: true };
   const exactNama = ref.kategoriPenyakitByTight.get(tightKey(clean));
-  if (exactNama) return { id: exactNama.id, label: exactNama.nama, score: 1, exact: true };
+  if (exactNama) return { id: exactNama.id, label: exactNama.nama, score: 1, exact: true, applied: true };
   const best = bestFuzzyMatch(ref.kategoriPenyakit, clean, (d) => d.nama);
-  if (best) return { id: best.item.id, label: best.item.nama, score: best.score, exact: false };
-  return null;
+  if (!best) return null;
+  const applied = best.score >= FUZZY_THRESHOLD;
+  return { id: best.item.id, label: best.item.nama, score: best.score, exact: false, applied };
 }
 
 export function findMatchingTindakan(ref, tindakanStr) {
   if (!tindakanStr) return null;
   const loose = normalizeLoose(tindakanStr);
   const exact = ref.tindakanByTight.get(tightKey(loose));
-  if (exact) return { id: exact.id, label: exact.nama, score: 1, exact: true };
+  if (exact) return { id: exact.id, label: exact.nama, score: 1, exact: true, applied: true };
   const best = bestFuzzyMatch(ref.jenisTindakan, loose, (t) => t.nama);
-  if (best) return { id: best.item.id, label: best.item.nama, score: best.score, exact: false };
-  return null;
+  if (!best) return null;
+  const applied = best.score >= FUZZY_THRESHOLD;
+  return { id: best.item.id, label: best.item.nama, score: best.score, exact: false, applied };
 }
