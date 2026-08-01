@@ -44,8 +44,10 @@ export function processKunjunganRows(jsonRows, refData, pendaftaranLookupMap, so
 
     // A fuzzy (non-exact) match still resolves the id, but is flagged for
     // manual review since it's a best-effort guess, not a confirmed match.
+    // Very high-confidence fuzzy matches (>0.95, e.g. just a punctuation/
+    // casing difference) aren't worth a human's time, so they're left out.
     const flagIfFuzzy = (label, raw, match) => {
-      if (match && !match.exact) {
+      if (match && !match.exact && match.score <= 0.95) {
         missingFields.push(`${label} (${raw} -> ${match.label}, score ${match.score.toFixed(2)})`);
       }
     };
