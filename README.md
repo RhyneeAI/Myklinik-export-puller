@@ -1,4 +1,4 @@
-# MyPharmaExportPuller
+# MyKlinikExportPuller
 
 CLI-based Node.js application dengan tiga mode:
 
