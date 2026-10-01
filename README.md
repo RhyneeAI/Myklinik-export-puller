@@ -21,6 +21,7 @@ Ketiga mode berdiri sendiri-sendiri dan hanya berbagi folder `output/` sebagai p
 
 ### IMPORT
 - **Fuzzy matching** — mencocokkan nama poli, dokter/perawat, kota/kecamatan/desa, agama, diagnosa (ICD-10), dan tindakan terhadap data referensi, walau penulisannya tidak persis sama
+- **Agama & wilayah sesuai produksi** — ID agama selalu diambil dari `kk_kategori` (ISLAM 58, KRISTEN PROTESTAN 59, …); "KOTA X" dan "KAB. X" tidak tertukar; kecamatan/desa hanya dicari di dalam kota/kecamatan induknya. Diuji terhadap 2.230 pasien produksi: agama/kota/kecamatan 100%, desa 99,8%
 - **Cross-reference Pendaftaran ↔ Kunjungan** — pakai nomor Register (bukan NIK/Nama) sebagai kunci utama supaya lebih akurat
 - **Batch INSERT** — baris Pendaftaran digabung sampai 500 baris per statement `INSERT ... VALUES (...), (...), ...`; tindakan per kunjungan juga digabung — jauh lebih sedikit statement dibanding satu `INSERT` per baris
 - **Satu file per periode** — SQL Pendaftaran + Kunjungan (dan rollback-nya) digabung jadi satu file masing-masing, bukan file terpisah per jenis
@@ -67,7 +68,7 @@ cp .env.example .env
 | `MODE` | Jenis data EXPORT: `pendaftaran`, `kunjungan`, atau `all` | `all` |
 | `REQUEST_DELAY_MS` | Jeda antar request (ms) | `15000` |
 | `MAX_RETRIES` | Maksimal percobaan ulang per request | `3` |
-| `LOGIN_KEY` / `LOGIN_USER` / `LOGIN_PASS` | Kredensial untuk auto re-login saat session expired | |
+| `LOGIN_KEY` / `LOGIN_USER` / `LOGIN_PASS` | Kredensial login (juga untuk auto re-login saat session expired). **Kalau ketiganya diisi, cookie di bawah diabaikan.** Pastikan ini akun dengan akses yang dibutuhkan (BACKUP butuh menu Master → Download Data) | |
 | `COOKIES_JSON` | Semua cookies sebagai JSON (dari DevTools → Copy as JSON), alternatif dari kredensial login | |
 | `SERVERID` | Cookie SERVERID | |
 | `SOKKACREATIVEID` | Cookie SOKKACREATIVEID | |
@@ -80,8 +81,15 @@ Tambahan environment variable opsional (bukan di `.env`, diset langsung saat men
 
 | Variable | Deskripsi |
 |---|---|
-| `ACTION` | Lewati prompt interaktif — set `EXPORT` atau `IMPORT` |
+| `ACTION` | Lewati prompt interaktif — set `EXPORT`, `IMPORT`, atau `MERGE_KUNJUNGAN` |
 | `PLAYWRIGHT_HEADLESS` | Set `false` untuk menjalankan browser dalam mode headed (debugging) |
+
+Variable yang diset langsung di perintah **mengalahkan** isi `.env`. Jadi untuk menarik rentang tertentu tanpa mengubah `.env`, cukup:
+
+```bash
+# contoh: tarik ulang Kunjungan Oktober 2024 saja, ke folder terpisah (progress-nya juga terpisah)
+ACTION=EXPORT MODE=kunjungan START_DATE=2024-10 END_DATE=2024-10 OUTPUT_DIR=output/backfill_2024_10 npm start
+```
 
 ### Mendapatkan Cookie
 
@@ -123,8 +131,10 @@ Set `MODE` di `.env`:
 
 #### Resume / Checkpoint
 
-Proses otomatis menyimpan progress ke `output/.progress.json`.
-Jika proses terputus (CTRL+C / error), jalankan ulang `npm start` dan akan melanjutkan dari posisi terakhir.
+Proses otomatis menyimpan progress ke `output/.progress.json` (atau `{OUTPUT_DIR}/.progress.json`).
+Jika proses terputus (CTRL+C / error), jalankan ulang perintah yang sama dan proses akan melanjutkan dari posisi terakhir — bulan/hari yang sudah selesai dilewati.
+
+Sebelum melanjutkan, pastikan tidak ada proses export lama yang masih berjalan (mis. `node src/index.js` yang tertinggal di Task Manager) — proses yang tertinggal tetap menggeser posisi progress.
 
 ### Mode IMPORT
 
@@ -138,6 +148,8 @@ Membaca semua file JSON di `output/pendaftaran/**` dan `output/kunjungan/**` (ut
 File referensi yang dibutuhkan di `sql-reference/` (dump tabel dari database produksi, bukan file ini yang menyimpan data — hanya dipakai sebagai lookup):
 
 `kk_kota`, `kk_kecamatan`, `kk_desa`, `kk_poli`, `kk_users`, `kk_kategori` (agama), `kk_kategori_penyakit` (diagnosa ICD-10), `kk_jenis_tindakan`.
+
+> **Keterbatasan yang diketahui:** mode IMPORT mengisi `kk_pendaftaran.no_pendaftaran` dengan nomor **Register** (nomor kunjungan) dan membuat satu baris pendaftaran per kunjungan. Di database produksi (Medisy), `no_pendaftaran` = **No. MR** pasien (satu baris per pasien), dan nomor Register disimpan di `kk_kunjungan.no_kunjungan`. Jangan jalankan hasil IMPORT ke database yang sudah berisi data sampai ini diperbaiki — untuk menambal data yang kurang, pakai SQL backfill (lihat [Migrasi ke Medisy](#migrasi-ke-medisy-catatan)).
 
 **Sebelum menjalankan SQL hasil generate ke database produksi, cek dulu `output/sql/import_recap.md`** — baris yang lookup-nya gagal total (`id` jadi `0`/`NULL`) maupun yang cuma fuzzy-matched (ada skor kemiripan) tercatat di sana untuk direview manual.
 
@@ -174,6 +186,20 @@ npm run backup -- --reparse     # buat ulang semua .json dari file yang sudah di
 
 Hasilnya hanya file mentah — belum ada konversi ke SQL / import ke database.
 
+## Migrasi ke Medisy (catatan)
+
+Hasil pencocokan data MyKlinik dengan database produksi Medisy (`sql-reference/`):
+
+- **Pasien:** `kk_pendaftaran.no_pendaftaran` = No. MR MyKlinik apa adanya (`001045`). Pasien yang dibuat langsung di Medisy bernomor 7 digit (`2670006`, …).
+- **Kunjungan:** `kk_kunjungan.no_kunjungan` = nomor **Register** MyKlinik. Nomor yang "bolong" di urutan hampir selalu kunjungan yang **dibatalkan** di MyKlinik — cek dengan export Kunjungan hari itu sebelum menganggapnya hilang.
+- **Poli kunjungan** paling akurat diambil dari kolom **Layanan** di export Pendaftaran (nama persis sama dengan `kk_poli`), bukan ditebak dari tindakan.
+- **SOAP** dari BACKUP tidak punya No. MR, jadi dicocokkan ke kunjungan lewat tanggal + dokter + jam (hasil di `output/backup/analisis/`). **TTV** tidak ada di export SOAP, tapi ada di **PDF print SOAP** (menu SOAP & Diagnosa → Print) beserta No. MR, keluhan/anamnesa, dan ICD-10.
+
+SQL tambalan disimpan di `output/sql/backfill/` (pasien & kunjungan) dan `output/sql/lab/` (pemeriksaan lab). Semuanya:
+- **aman dijalankan ulang** — baris yang kuncinya sudah ada (`no_pendaftaran`, `no_kunjungan`, `ucode`) dilewati,
+- punya **file `_rollback.sql`** yang hanya menghapus baris baru hasil SQL tersebut,
+- disertai **CSV review** untuk dicek sebelum dijalankan.
+
 ## Struktur Output
 
 ```
@@ -189,12 +215,15 @@ output/
 │       └── {APP_TARGET}_kunjungan_ALL_merged.xlsx|json    ← merge all-time
 ├── backup/
 │   ├── pasien/{APP_TARGET}_pasien_{start}_{end}.{xls|xlsx}|json
-│   └── {YYYY}_{MM}/{APP_TARGET}_{jenis}_{YYYY}_{MM}.{csv|xlsx}|json   ← semua jenis Rekam Medis bulan itu
+│   ├── {YYYY}_{MM}/{APP_TARGET}_{jenis}_{YYYY}_{MM}.{csv|xlsx}|json   ← semua jenis Rekam Medis bulan itu
+│   └── analisis/                       ← hasil pencocokan SOAP/Lab ↔ kunjungan, daftar pasien yang belum ada di DB
 └── sql/
-    └── {YYYY}/
-        ├── {YYYY}_{MM}.sql               (Pendaftaran batched + Kunjungan; atau _part1.sql, _part2.sql, ... jika >1MB)
-        └── {YYYY}_{MM}_rollback.sql      (Kunjungan lalu Pendaftaran)
-    (dan output/sql/import_recap.md di level atas)
+    ├── {YYYY}/
+    │   ├── {YYYY}_{MM}.sql               (Pendaftaran batched + Kunjungan; atau _part1.sql, _part2.sql, ... jika >1MB)
+    │   └── {YYYY}_{MM}_rollback.sql      (Kunjungan lalu Pendaftaran)
+    ├── import_recap.md
+    ├── backfill/                         ← SQL tambalan pasien & kunjungan + rollback + CSV review
+    └── lab/                              ← SQL kk_pemeriksaan_tambahan_lab + rollback
 ```
 
 ## Catatan
