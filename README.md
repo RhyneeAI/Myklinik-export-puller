@@ -155,6 +155,25 @@ EXPORT menulis file merge bulanan Kunjungan (`{APP_TARGET}_{YYYY}_{MM}_merged.xl
 ACTION=MERGE_KUNJUNGAN npm start
 ```
 
+### BACKUP (Download Data)
+
+Tool terpisah (bukan pilihan di prompt `npm start`) untuk mengambil semua data dari menu **Master Data → Download Data** (`#masterdata/upload/upload`) — butuh akun dengan akses menu tersebut.
+
+```bash
+npm run backup                  # tunggu jam download, lalu download semua
+npm run backup -- --dry-run     # login & tampilkan daftar file yang akan didownload (bisa kapan saja)
+npm run backup -- --no-wait     # keluar kalau di luar jam download, bukan menunggu
+npm run backup -- --reparse     # buat ulang semua .json dari file yang sudah didownload (offline)
+```
+
+- **Data Pasien** — semua bagian yang tampil di halaman (mis. 1–1000, 1001–2000, ...), rentangnya dibaca langsung dari halaman.
+- **Data Rekam Medis** — semua jenis (General Consent, Risiko Jatuh, Informed Consent, Satu Sehat, SOAP, CPPT, Surgical Safety Checklist, Lab, Radiologi, MCU, Resep & Obat) untuk setiap bulan dari `START_DATE` sampai `END_DATE`.
+- **Jam download 21.00–06.00 WIB** — aturan dari MyKlinik, dan tool ini mematuhinya: di luar jam itu tool menunggu sampai 21.00 WIB, tidak memulai download baru mulai 05.50 WIB, lalu otomatis lanjut di malam berikutnya kalau masih ada sisa.
+- **Resume** — file yang `.json`-nya sudah ada dilewati, jadi aman dijalankan ulang/dihentikan kapan saja.
+- File asli dari server disimpan apa adanya, plus `.json` hasil parsing sheet pertama (baris judul dilewati, nilai tetap teks asli — tanggal tidak diubah jadi angka Excel). Kalau gagal membuka halaman, screenshot disimpan di `output/backup/_last_error.png`.
+
+Hasilnya hanya file mentah — belum ada konversi ke SQL / import ke database.
+
 ## Struktur Output
 
 ```
@@ -168,6 +187,9 @@ output/
 │   └── merged/
 │       ├── {APP_TARGET}_{YYYY}_{MM}_merged.xlsx|json      ← merge bulanan
 │       └── {APP_TARGET}_kunjungan_ALL_merged.xlsx|json    ← merge all-time
+├── backup/
+│   ├── pasien/{APP_TARGET}_pasien_{start}_{end}.{xls|xlsx}|json
+│   └── {YYYY}_{MM}/{APP_TARGET}_{jenis}_{YYYY}_{MM}.{csv|xlsx}|json   ← semua jenis Rekam Medis bulan itu
 └── sql/
     └── {YYYY}/
         ├── {YYYY}_{MM}.sql               (Pendaftaran batched + Kunjungan; atau _part1.sql, _part2.sql, ... jika >1MB)

@@ -5,7 +5,8 @@
   "description": "Automated Excel data puller from MyKlinik with cookie-based auth",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "backup": "node src/backup.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
