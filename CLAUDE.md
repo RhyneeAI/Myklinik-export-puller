@@ -117,7 +117,7 @@ V1 re-runs reuse finished files via `isFinalExport(file, periodEnd)`: a file tha
   - Files from a previous build are replaced. Other SQL files with the same period name (old IMPORT output) are moved to `output/sql/_previous/`.
   - The recap goes to `output/sql/migrate_recap.md`.
 
-**`archive.js`** writes one zip per month to `output/archive/{YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip` (folders `pendaftaran/`, `kunjungan/`, `rekam-medis/`, `soap-pdf/`), plus `{APP_TARGET}_pasien.zip`. A zip is rebuilt only when a source file is newer than it.
+**`archive.js`** writes one zip per month to `output/archive/{YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip` (folders `pendaftaran/`, `kunjungan/`, `rekam-medis/`, `soap-pdf/`), plus `{APP_TARGET}_pasien.zip`. A zip is rebuilt only when a source file is newer than it. `buildFullArchive` always rewrites `{APP_TARGET}_backup_lengkap.zip`: Data Pasien plus `{YYYY}/{YYYY_MM}/{pendaftaran,kunjungan,rekam-medis}`, with `ISI_ZIP.txt` listing per-month coverage and missing kunjungan days. SOAP PDFs are only included with `withSoapPdf`.
 
 ## IMPORT pipeline architecture (legacy — superseded by MIGRATE)
 

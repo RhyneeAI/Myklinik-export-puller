@@ -243,7 +243,7 @@ npm run migrate -- --from=4           # lanjut dari langkah 4 (mis. setelah lang
 - **SQL (langkah 5)** disimpan per bulan di `output/sql/{YYYY}/{YYYY}_{MM}.sql` (dipecah `_part2`, … bila >1MB), **dijalankan dari bulan terlama**. Semua INSERT dilewati bila datanya sudah ada (No. MR / No. Register / kode sampel lab), UPDATE hanya mengisi kolom yang masih kosong — aman untuk database yang sudah berisi sebagian data. `{YYYY}_{MM}_rollback.sql` membatalkannya (jalankan dari bulan **terbaru**). Ringkasan & hal yang perlu dicek: `output/sql/migrate_recap.md`.
 - **Yang sudah dipetakan ke SQL:** pasien, kunjungan (poli, dokter, jam), SOAP → `keluhan_awal`/`riwayat_peny_sekarang` + TTV (TB, BB, TD, nadi, RR, SpO2, suhu, lingkar perut/kepala, IMT), Lab → `kk_pemeriksaan_tambahan_lab`. **Belum (placeholder):** O/A/P SOAP & 9 jenis Rekam Medis lainnya (General Consent, Risiko Jatuh, Informed Consent, Satu Sehat, CPPT, Surgical Safety, Radiologi, MCU, Resep & Obat) — jumlah datanya tercatat di recap.
 - **TTV** dari PDF: nilai `0` berarti tidak diisi (dikosongkan); nilai yang tidak wajar (mis. suhu 3.7) dikosongkan dan dicatat di recap.
-- **Zip (langkah 6):** `output/archive/{YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip` berisi `pendaftaran/`, `kunjungan/`, `rekam-medis/`, `soap-pdf/` bulan itu; Data Pasien di `output/archive/{APP_TARGET}_pasien.zip`. Berisi data medis pasien — simpan dengan aman.
+- **Zip (langkah 6):** `output/archive/{YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip` berisi `pendaftaran/`, `kunjungan/`, `rekam-medis/`, `soap-pdf/` bulan itu; Data Pasien di `output/archive/{APP_TARGET}_pasien.zip`; plus **satu zip lengkap** `output/archive/{APP_TARGET}_backup_lengkap.zip` (Data Pasien + per tahun/bulan: pendaftaran, kunjungan, 11 Rekam Medis) dengan `ISI_ZIP.txt` yang mencatat kelengkapan tiap bulan dan hari kunjungan yang belum ditarik. Buat ulang kapan saja: `npm run migrate -- --steps=zip`. Berisi data medis pasien — simpan dengan aman.
 
 PDF SOAP juga bisa ditarik sendiri: `npm run soap-pdf` (opsi `--limit=N`, `--month=YYYY_MM`, `--reparse` untuk membaca ulang PDF yang sudah ada tanpa internet, `--dry-run` untuk melihat jumlahnya saja).
 
@@ -281,7 +281,8 @@ output/
 │   └── analisis/                       ← hasil pencocokan SOAP/Lab ↔ kunjungan, daftar pasien yang belum ada di DB
 ├── archive/
 │   ├── {YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip   ← pendaftaran + kunjungan + rekam medis + PDF SOAP bulan itu
-│   └── {APP_TARGET}_pasien.zip
+│   ├── {APP_TARGET}_pasien.zip
+│   └── {APP_TARGET}_backup_lengkap.zip     ← semua data dalam satu zip (+ ISI_ZIP.txt)
 └── sql/
     ├── {YYYY}/
     │   ├── {YYYY}_{MM}.sql               (Pendaftaran batched + Kunjungan; atau _part1.sql, _part2.sql, ... jika >1MB)

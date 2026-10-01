@@ -22,7 +22,7 @@ import { createLogger, green, red, yellow, dim } from './logger.js';
 import { parseDateRange, generateMonthlyRange } from './utils.js';
 import { runSoapPdf } from './soap-pdf.js';
 import { buildSql } from './build-sql.js';
-import { buildArchives } from './archive.js';
+import { buildArchives, buildFullArchive } from './archive.js';
 
 dotenv.config();
 
@@ -43,7 +43,7 @@ const STEPS = [
   { n: 3, name: 'rekam-medis', title: 'Tarik 11 jenis Rekam Medis (Download Data)', run: () => runTool('backup.js', ['--only=rekam-medis', ...(NO_WAIT ? ['--no-wait'] : [])]) },
   { n: 4, name: 'soap-pdf', title: 'Tarik & parse PDF SOAP per kunjungan', run: async (log) => { const r = await runSoapPdf(log); return r.failed ? 1 : 0; } },
   { n: 5, name: 'sql', title: 'Bangun SQL (pasien, kunjungan + SOAP/TTV, lab)', run: async (log) => { const r = await buildSql(log); log.info(`SQL: ${r.pasien} pasien, ${r.kunjungan} kunjungan (${r.update} dengan SOAP/TTV), ${r.lab} sampel lab -> ${r.files} file di output/sql/{tahun}/ · recap: output/sql/migrate_recap.md`); return 0; } },
-  { n: 6, name: 'zip', title: 'Zip arsip per tahun-bulan', run: async (log, periods) => { buildArchives(log, periods); return 0; } },
+  { n: 6, name: 'zip', title: 'Zip arsip per tahun-bulan + satu zip lengkap', run: async (log, periods) => { buildArchives(log, periods); buildFullArchive(log, periods); return 0; } },
 ];
 
 function selectSteps() {
