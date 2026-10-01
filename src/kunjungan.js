@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import XLSX from 'xlsx';
-import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay, sleep } from './utils.js';
+import { isFinalExport, formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay, sleep } from './utils.js';
 import { updateKunjunganProgress } from './progress.js';
 import { dim, green, yellow, red } from './logger.js';
 import dotenv from 'dotenv';
@@ -190,6 +190,16 @@ export async function processKunjungan(log, progress, context) {
       for (let day = 1; day <= daysInMonth; day++) {
         const label = `${year}_${String(month).padStart(2, '0')}_${String(day).padStart(2, '0')}`;
         const dateStr = formatDateDMY(year, month, day);
+
+        const existingPath = path.join(OUTPUT_DIR, 'kunjungan', String(year), `${APP_TARGET}_${formatFileDate(year, month, day)}.xlsx`);
+        if (isFinalExport(existingPath, new Date(year, month - 1, day + 1))) {
+          // Already exported after that day ended: reuse it (and keep it in the monthly merge)
+          monthlyRows.push(...parseExcelToJson(fs.readFileSync(existingPath)));
+          totalSkipped++;
+          dayIndex++;
+          log.progressBar(dayIndex, totalDays, label);
+          continue;
+        }
 
         const cursor = progress.kunjungan.cursor;
         if (shouldSkipDate(cursor, year, month, day)) {

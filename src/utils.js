@@ -1,3 +1,4 @@
+import fs from 'fs';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -48,6 +49,17 @@ export function formatFileDate(year, month, day) {
   return day
     ? `${year}_${String(month).padStart(2, '0')}_${String(day).padStart(2, '0')}`
     : `${year}_${String(month).padStart(2, '0')}`;
+}
+
+// True when `filePath` exists and was written after the period it covers had
+// ended (`periodEnd` = first moment after the period), i.e. it can't change
+// anymore. Lets re-runs reuse finished exports without trusting a cursor.
+export function isFinalExport(filePath, periodEnd) {
+  try {
+    return fs.statSync(filePath).mtime > periodEnd;
+  } catch {
+    return false;
+  }
 }
 
 export function looksLikeHTML(buffer) {

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import XLSX from 'xlsx';
-import { formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay, sleep } from './utils.js';
+import { isFinalExport, formatDateDMY, formatFileDate, getDaysInMonth, looksLikeHTML, summarizeHtml, requestDelay, sleep } from './utils.js';
 import { updatePendaftaranProgress } from './progress.js';
 import { dim, green, yellow, red } from './logger.js';
 import dotenv from 'dotenv';
@@ -194,6 +194,18 @@ export async function processPendaftaran(log, progress, context) {
       const period = `${year}-${String(month).padStart(2, '0')}`;
       const dateKey = formatFileDate(year, month);
       const fname = `${APP_TARGET}_${dateKey}.xlsx`;
+
+      const existingPath = path.join(OUTPUT_DIR, 'pendaftaran', String(year), fname);
+      if (isFinalExport(existingPath, new Date(year, month, 1))) {
+        // Already exported after that month ended: reuse it
+        allPeriodRows.push(...parseExcelToJson(fs.readFileSync(existingPath)));
+        log.tableRow([dim(period), yellow('SKIP'), dim('ada'), dim(fname)]);
+        monthIndex++;
+        log.progressBar(monthIndex, totalMonths, period);
+        month--;
+        if (month < 1) { month = 12; year--; }
+        continue;
+      }
 
       const cursor = progress.pendaftaran.cursor;
       if (cursor) {
