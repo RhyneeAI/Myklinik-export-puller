@@ -116,11 +116,12 @@ export function processPendaftaranRows(jsonRows, refData, sourceFileName) {
 
     // Match Kecamatan
     const rawKec = isPlaceholder(row['__EMPTY_13']) ? '' : (row['__EMPTY_13'] || '').trim();
-    const kecObj = rawKec ? recordMatch('kecamatan', rawKec, findMatchingKecamatan(refData, rawKec)) : null;
+    // (searched only within the matched kota/kecamatan -- region names repeat across provinces)
+    const kecObj = rawKec ? recordMatch('kecamatan', rawKec, findMatchingKecamatan(refData, rawKec, kotaObj ? kotaObj.id : null)) : null;
 
     // Match Desa
     const rawDesa = isPlaceholder(row['__EMPTY_12']) ? '' : (row['__EMPTY_12'] || '').trim();
-    const desaObj = rawDesa ? recordMatch('desa', rawDesa, findMatchingDesa(refData, rawDesa)) : null;
+    const desaObj = rawDesa ? recordMatch('desa', rawDesa, findMatchingDesa(refData, rawDesa, kecObj ? kecObj.id : null)) : null;
 
     // Handle place_of_birth
     let placeOfBirth = rawPob;

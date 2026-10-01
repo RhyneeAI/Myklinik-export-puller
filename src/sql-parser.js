@@ -136,21 +136,21 @@ function cleanVal(v) {
   return decodeHtmlEntities(trimmed);
 }
 
-const DEFAULT_AGAMA_MAP = {
-  ISLAM: 1,
-  PROTESTAN: 2,
-  KRISTEN: 2,
-  KATOLIK: 3,
-  HINDU: 4,
-  BUDDHA: 5,
-  KHONGHUCU: 6,
-  'LAIN-LAIN': 72,
-  LAINNYA: 72,
+// Spellings used by the MyKlinik export -> the name kk_kategori uses for the
+// same agama. IDs always come from kk_kategori itself (production uses
+// 58..63/72); if the dump has no agama rows, lookups fail into the recap
+// rather than falling back to made-up IDs.
+const AGAMA_ALIASES = {
+  KRISTEN: 'KRISTEN PROTESTAN',
+  PROTESTAN: 'KRISTEN PROTESTAN',
+  KHONGHUCU: 'KONGHUCU',
+  LAINNYA: 'LAIN-LAIN',
+  'LAIN-LAIN': 'LAINNYA',
 };
 
 export function loadSqlReferenceData(sqlRefDir) {
   const ref = {
-    kategoriAgama: { ...DEFAULT_AGAMA_MAP },
+    kategoriAgama: {},
     kota: [],
     kecamatan: [],
     desa: [],
@@ -175,6 +175,11 @@ export function loadSqlReferenceData(sqlRefDir) {
     for (const r of rows) {
       if ((r.type || '').toUpperCase() === 'AGAMA' && r.nama && r.id) {
         ref.kategoriAgama[r.nama.trim().toUpperCase()] = parseInt(r.id, 10);
+      }
+    }
+    for (const [alias, target] of Object.entries(AGAMA_ALIASES)) {
+      if (ref.kategoriAgama[alias] == null && ref.kategoriAgama[target] != null) {
+        ref.kategoriAgama[alias] = ref.kategoriAgama[target];
       }
     }
   }
@@ -397,12 +402,32 @@ export function findMatchingAgama(ref, agamaStr) {
   return { id: best.id, label: best.k, score: bestScore, exact: false, applied };
 }
 
-function matchLocation(list, tightIndex, raw) {
-  if (!raw) return null;
-  const loose = stripAdminPrefix(normalizeLoose(raw));
-  const exact = tightIndex.get(tightKey(loose));
+// "KOTA X" and "KAB. X" are different places (KOTA BEKASI 3275 vs KAB.
+// BEKASI 3216), so the prefix is kept for the first, exact comparison and
+// only stripped as a fallback.
+function canonicalAdminPrefix(str) {
+  return str
+    .replace(/^(KABUPATEN|KAB\.?)\s+/, 'KAB ')
+    .replace(/^KOTA (ADM\.?|ADMINISTRASI)\s+/, 'KOTA ');
+}
+
+// Region ids are hierarchical (kota 3173 -> kecamatan 317306 -> desa
+// 3173061003); `parentId` limits the search to that parent's children so a
+// common name ("KETAPANG", "PEJUANG") can't match a namesake in another
+// province. `parentId === null` means the parent lookup failed: no match.
+function matchLocation(list, tightIndex, raw, parentId) {
+  if (!raw || parentId === null) return null;
+  const pool = parentId === undefined ? list : list.filter((it) => String(it.id).startsWith(String(parentId)));
+  const looseFull = canonicalAdminPrefix(normalizeLoose(raw));
+  const full = pool.find((it) => tightKey(canonicalAdminPrefix(it.nama)) === tightKey(looseFull));
+  if (full) return { id: full.id, label: full.nama, score: 1, exact: true, applied: true };
+
+  const loose = stripAdminPrefix(looseFull);
+  const exact = parentId === undefined
+    ? tightIndex.get(tightKey(loose))
+    : pool.find((it) => tightKey(stripAdminPrefix(it.nama)) === tightKey(loose));
   if (exact) return { id: exact.id, label: exact.nama, score: 1, exact: true, applied: true };
-  const best = bestFuzzyMatch(list, loose, (it) => stripAdminPrefix(it.nama));
+  const best = bestFuzzyMatch(pool, loose, (it) => stripAdminPrefix(it.nama));
   if (!best) return null;
   const applied = best.score >= FUZZY_THRESHOLD;
   return { id: best.item.id, label: best.item.nama, score: best.score, exact: false, applied };
@@ -412,12 +437,12 @@ export function findMatchingKota(ref, kotaStr) {
   return matchLocation(ref.kota, ref.kotaByTight, kotaStr);
 }
 
-export function findMatchingKecamatan(ref, kecStr) {
-  return matchLocation(ref.kecamatan, ref.kecamatanByTight, kecStr);
+export function findMatchingKecamatan(ref, kecStr, kotaId) {
+  return matchLocation(ref.kecamatan, ref.kecamatanByTight, kecStr, kotaId);
 }
 
-export function findMatchingDesa(ref, desaStr) {
-  return matchLocation(ref.desa, ref.desaByTight, desaStr);
+export function findMatchingDesa(ref, desaStr, kecamatanId) {
+  return matchLocation(ref.desa, ref.desaByTight, desaStr, kecamatanId);
 }
 
 export function findMatchingPoli(ref, poliStr) {
