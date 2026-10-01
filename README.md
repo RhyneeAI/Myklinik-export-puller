@@ -3,10 +3,12 @@
 CLI-based Node.js application dengan tiga mode:
 
 - **EXPORT** — menarik data **Pendaftaran** dan **Kunjungan** dari aplikasi MyKlinik (`apps.myklinik.id`) secara otomatis via browser automation. Data di-export sebagai file Excel (`.xlsx`) dan JSON.
-- **IMPORT** — membaca hasil export JSON di atas, mencocokkannya dengan data referensi dari database (`sql-reference/*.sql`), lalu menghasilkan file SQL `INSERT`/rollback siap-pakai untuk mengisi database klinik.
+- **IMPORT** *(lama — digantikan MIGRATE)* — membaca hasil export JSON di atas, mencocokkannya dengan data referensi dari database (`sql-reference/*.sql`), lalu menghasilkan file SQL `INSERT`/rollback.
 - **MERGED KUNJUNGAN** — mode perbaikan/backfill untuk file merge bulanan Kunjungan (lihat [Mode MERGED KUNJUNGAN](#mode-merged-kunjungan)).
 
 Ketiga mode berdiri sendiri-sendiri dan hanya berbagi folder `output/` sebagai penghubung.
+
+Untuk migrasi lengkap ke Medisy gunakan **`npm run migrate`** — satu perintah yang menarik semua data (pasien, kunjungan, 11 jenis Rekam Medis, PDF SOAP), membuat SQL per bulan, dan mengarsipkan hasilnya ke zip (lihat [MIGRATE](#migrate--semua-langkah-dalam-satu-perintah)).
 
 ## Fitur
 
@@ -186,6 +188,33 @@ npm run backup -- --reparse     # buat ulang semua .json dari file yang sudah di
 
 Hasilnya hanya file mentah — belum ada konversi ke SQL / import ke database.
 
+## MIGRATE — semua langkah dalam satu perintah
+
+```bash
+npm run migrate                       # jalankan semua langkah untuk START_DATE..END_DATE
+npm run migrate -- --no-wait          # siang hari: lewati langkah 1 & 3 (Download Data) kalau di luar jam 21.00–06.00
+npm run migrate -- --steps=4,5,6      # hanya langkah tertentu (nomor atau nama)
+npm run migrate -- --from=4           # lanjut dari langkah 4 (mis. setelah langkah 4 gagal)
+```
+
+| # | Langkah | Sumber | Jam |
+|---|---|---|---|
+| 1 | `pasien` — Data Pasien | Download Data (V2) | 21.00–06.00 WIB |
+| 2 | `kunjungan` — Pendaftaran per bulan + Kunjungan per hari | Laporan V1 | kapan saja |
+| 3 | `rekam-medis` — 11 jenis Rekam Medis per bulan | Download Data (V2) | 21.00–06.00 WIB |
+| 4 | `soap-pdf` — PDF print SOAP per kunjungan + baca TTV/keluhan | SOAP & Diagnosa → Print | kapan saja |
+| 5 | `sql` — SQL pasien, kunjungan (+SOAP/TTV), lab | file di `output/` + dump `sql-reference/` | offline |
+| 6 | `zip` — arsip per tahun-bulan | file di `output/` | offline |
+
+- **Bisa dijalankan ulang kapan saja** — file yang sudah lengkap tidak diunduh ulang (data hari/bulan berjalan tetap diperbarui). Kalau satu langkah gagal, pipeline berhenti dan memberi tahu cara melanjutkan (`--from=N`).
+- **Data pasien pakai Download Data (V2)** — satu baris per pasien dengan No. MR, persis bentuk `kk_pendaftaran`. Laporan Pendaftaran V1 tetap ditarik di langkah 2 karena itulah sumber **poli** tiap kunjungan.
+- **SQL (langkah 5)** disimpan per bulan di `output/sql/{YYYY}/{YYYY}_{MM}.sql` (dipecah `_part2`, … bila >1MB), **dijalankan dari bulan terlama**. Semua INSERT dilewati bila datanya sudah ada (No. MR / No. Register / kode sampel lab), UPDATE hanya mengisi kolom yang masih kosong — aman untuk database yang sudah berisi sebagian data. `{YYYY}_{MM}_rollback.sql` membatalkannya (jalankan dari bulan **terbaru**). Ringkasan & hal yang perlu dicek: `output/sql/migrate_recap.md`.
+- **Yang sudah dipetakan ke SQL:** pasien, kunjungan (poli, dokter, jam), SOAP → `keluhan_awal`/`riwayat_peny_sekarang` + TTV (TB, BB, TD, nadi, RR, SpO2, suhu, lingkar perut/kepala, IMT), Lab → `kk_pemeriksaan_tambahan_lab`. **Belum (placeholder):** O/A/P SOAP & 9 jenis Rekam Medis lainnya (General Consent, Risiko Jatuh, Informed Consent, Satu Sehat, CPPT, Surgical Safety, Radiologi, MCU, Resep & Obat) — jumlah datanya tercatat di recap.
+- **TTV** dari PDF: nilai `0` berarti tidak diisi (dikosongkan); nilai yang tidak wajar (mis. suhu 3.7) dikosongkan dan dicatat di recap.
+- **Zip (langkah 6):** `output/archive/{YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip` berisi `pendaftaran/`, `kunjungan/`, `rekam-medis/`, `soap-pdf/` bulan itu; Data Pasien di `output/archive/{APP_TARGET}_pasien.zip`. Berisi data medis pasien — simpan dengan aman.
+
+PDF SOAP juga bisa ditarik sendiri: `npm run soap-pdf` (opsi `--limit=N`, `--month=YYYY_MM`, `--reparse` untuk membaca ulang PDF yang sudah ada tanpa internet).
+
 ## Migrasi ke Medisy (catatan)
 
 Hasil pencocokan data MyKlinik dengan database produksi Medisy (`sql-reference/`):
@@ -216,12 +245,17 @@ output/
 ├── backup/
 │   ├── pasien/{APP_TARGET}_pasien_{start}_{end}.{xls|xlsx}|json
 │   ├── {YYYY}_{MM}/{APP_TARGET}_{jenis}_{YYYY}_{MM}.{csv|xlsx}|json   ← semua jenis Rekam Medis bulan itu
+│   ├── {YYYY}_{MM}/soap-pdf/*.pdf      ← PDF SOAP (+ {APP_TARGET}_soap-pdf_{YYYY}_{MM}.json hasil baca)
 │   └── analisis/                       ← hasil pencocokan SOAP/Lab ↔ kunjungan, daftar pasien yang belum ada di DB
+├── archive/
+│   ├── {YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip   ← pendaftaran + kunjungan + rekam medis + PDF SOAP bulan itu
+│   └── {APP_TARGET}_pasien.zip
 └── sql/
     ├── {YYYY}/
     │   ├── {YYYY}_{MM}.sql               (Pendaftaran batched + Kunjungan; atau _part1.sql, _part2.sql, ... jika >1MB)
     │   └── {YYYY}_{MM}_rollback.sql      (Kunjungan lalu Pendaftaran)
-    ├── import_recap.md
+    ├── migrate_recap.md                  ← ringkasan & hal yang perlu dicek (MIGRATE)
+    ├── import_recap.md                   ← (IMPORT lama)
     ├── backfill/                         ← SQL tambalan pasien & kunjungan + rollback + CSV review
     └── lab/                              ← SQL kk_pemeriksaan_tambahan_lab + rollback
 ```

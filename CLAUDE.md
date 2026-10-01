@@ -18,6 +18,8 @@ The modes are independent pipelines that only share the `output/` directory as a
 npm install       # install dependencies
 npm start         # runs src/index.js, prompts for EXPORT / IMPORT / MERGED KUNJUNGAN
 npm run backup    # separate tool: Master Data → Download Data (see BACKUP below)
+npm run soap-pdf  # SOAP print PDF per SOAP id + parse (see SOAP PDF below)
+npm run migrate   # whole MyKlinik -> Medisy pipeline in one command (see MIGRATE below)
 ```
 
 There is no build step, lint config, or test suite. For verification, use `node --check <file>` for syntax, then run the relevant mode against existing `output/` data. IMPORT and MERGED KUNJUNGAN need no browser or network, so you can re-run them freely.
@@ -67,7 +69,57 @@ This is a separate entry point, not one of the `npm start` modes. It pulls every
 - **Login:** `login()` waits for `#captcha` to be non-empty (see EXPORT), then checks that the Download Data menu link exists. A successful login without that link means the account lacks access.
 - `--dry-run` logs in and lists the plan, including a sample URL. It works at any hour.
 
-## IMPORT pipeline architecture
+## Shared session (`src/session.js`)
+
+`login(page, menuHref)` and `openView(page, menuHref, readyFn)` are used by BACKUP and SOAP PDF. The V1 scrapers keep their own copies.
+- `login` waits for the captcha, retries when the form's init scripts wipe the filled fields, and checks that `menuHref` exists afterwards. A successful login without that link means a lower-access account.
+- `openView` must **click** the menu link. The SPA loads views from the link's click handler, and a click before those handlers bind (or a bare hash change) only changes the URL. It waits for the network to settle, re-clicks on retry, and saves `output/_last_error.png` on failure.
+
+## SOAP PDF (`npm run soap-pdf`, `src/soap-pdf.js` + `src/soap-pdf-parser.js`)
+
+For every SOAP id (column `1`) in the BACKUP SOAP exports, it builds the same URL as the page's `scPrint(id)`: `GetTanggalLahir` → `DiffDate` → `sc.reportme.php?...`. It then fetches the PDF with the session and the `Referer` the Print iframe sends, and saves it to `output/backup/{YYYY_MM}/soap-pdf/`. Existing PDFs are skipped, and test rows ("AAAA"/"TEST") are ignored. Flags: `--limit=N`, `--month=YYYY_MM`, `--reparse` (offline), `--dry-run`.
+
+`parseSoapPdf()` rebuilds text lines from pdfjs item positions and splits them on the known `Label : value` labels. Wrapped cell text is joined with a space, and a taller gap marks a real paragraph (`\n`). It returns MR, tanggal, dokter, keluhan, anamnesa, S/O/A/P, jenis kunjungan, `ttv`, `ttv_issues`, ICD-10 (with primary flag), and ICD-9. TTV `0`/`.0` become `null`, and values outside `TTV_RANGES` (e.g. "Suhu 3.7") become `null` and are reported. Per-month results go to `{APP_TARGET}_soap-pdf_{YYYY_MM}.json`.
+
+## MIGRATE (`npm run migrate`, `src/migrate.js`)
+
+One command, six resumable steps over `START_DATE..END_DATE`:
+
+1. `pasien`: `backup.js --only=pasien` (21:00–06:00 WIB)
+2. `kunjungan`: `index.js` with `ACTION=EXPORT MODE=all` (V1 Pendaftaran monthly + Kunjungan daily)
+3. `rekam-medis`: `backup.js --only=rekam-medis` (21:00–06:00 WIB)
+4. `soap-pdf`
+5. `sql`: `src/build-sql.js`
+6. `zip`: `src/archive.js`
+
+Steps 1–3 run as child processes, and 4–6 run in-process. Flags: `--steps=2,4,5` (numbers or names), `--from=N`, and `--no-wait` (steps 1/3 exit instead of waiting when outside the window). The pipeline stops at the first failing step. Re-run it with `--from=N`.
+
+V1 re-runs reuse finished files via `isFinalExport(file, periodEnd)`: a file that exists and was written after its day/month ended is read from disk instead of downloaded, and it also feeds the monthly merge. Files for the current day/month are always re-downloaded.
+
+**`build-sql.js`** works only from local files plus the `sql-reference/` dump snapshot:
+- `kk_pendaftaran`: from BACKUP Data Pasien, with lookups from `sql-parser.js`.
+  - Guarded by `no_pendaftaran`, plus a duplicate-person guard: same NIK, or same name + DOB when there is no NIK.
+  - Each patient is placed in the month of `min(TGL MR, first visit)`. Earlier patients are included only when they have a visit in range.
+  - `jam` comes from the first registration, formatted `h:mm AM/PM`.
+- `kk_kunjungan`: from V1 Kunjungan daily files, limited to visits in range.
+  - The patient comes from a subquery on MR, falling back to NIK.
+  - `id_layanan` is the poli from the V1 Pendaftaran row with the same Register, or POLI UMUM (reported in the recap) when that row is missing.
+  - The doctor comes from `findMatchingUser`.
+  - SOAP PDFs attach by MR + tanggal, with the doctor as tie-break. They supply `keluhan_awal` (Keluhan, else Anamnesa, else the first line of S), `riwayat_peny_sekarang` (S), and the TTV columns.
+  - Each visit is an INSERT guarded by `no_kunjungan`, plus an UPDATE that fills only empty columns, for visits already in the DB. `tipe_kunjungan` is left `SAKIT`; production has never used another value.
+- `kk_pemeriksaan_tambahan_lab`: every MyKlinik lab row is test 170 at the catalog price.
+  - Rows link to the visit through the SOAP of the same MyKlinik visit id, else the nearest visit time that day (same doctor preferred, within 180 min).
+  - The guard is `ucode = 'MYKLINIK-LAB:<sample>'`, and `id_kunjungan` comes from a subquery on `no_kunjungan`.
+- The other 9 Rekam Medis types are placeholders in `REKAM_MEDIS_TYPES` (`null` = not mapped). Only their row counts appear in the recap.
+- Output: `output/sql/{YYYY}/{YYYY}_{MM}.sql` (split at 1MB on statement-group boundaries via `writeChunkedSql`), to be run oldest first, plus `{YYYY}_{MM}_rollback.sql`, to be run newest first.
+  - The rollback deletes only ids above the dump's max.
+  - It restores UPDATEd columns to their dump value only if they still hold the value this SQL wrote.
+  - Files from a previous build are replaced. Other SQL files with the same period name (old IMPORT output) are moved to `output/sql/_previous/`.
+  - The recap goes to `output/sql/migrate_recap.md`.
+
+**`archive.js`** writes one zip per month to `output/archive/{YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip` (folders `pendaftaran/`, `kunjungan/`, `rekam-medis/`, `soap-pdf/`), plus `{APP_TARGET}_pasien.zip`. A zip is rebuilt only when a source file is newer than it.
+
+## IMPORT pipeline architecture (legacy — superseded by MIGRATE)
 
 The entry point is `runImport()` in `src/importer.js`.
 
@@ -111,13 +163,16 @@ output/
 ├── kunjungan/merged/{APP_TARGET}_{YYYY}_{MM}_merged.xlsx|json
 ├── kunjungan/merged/{APP_TARGET}_kunjungan_ALL_merged.xlsx|json
 ├── backup/pasien/…, backup/{YYYY}_{MM}/{APP_TARGET}_{slug}_{YYYY}_{MM}.csv|json   (BACKUP tool)
+├── backup/{YYYY}_{MM}/soap-pdf/*.pdf, backup/{YYYY}_{MM}/{APP_TARGET}_soap-pdf_{YYYY}_{MM}.json   (SOAP PDF)
+├── archive/{YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip, archive/{APP_TARGET}_pasien.zip   (MIGRATE step 6)
 └── sql/
     ├── {YYYY}/{YYYY}_{MM}.sql (or _partN.sql), {YYYY}_{MM}_rollback.sql
-    ├── import_recap.md
+    ├── migrate_recap.md   (MIGRATE)
+    ├── import_recap.md    (legacy IMPORT)
     ├── backfill/   targeted INSERTs + rollback + review CSV (pasien, kunjungan per period)
     └── lab/        kk_pemeriksaan_tambahan_lab from BACKUP Lab export
 ```
 
-The `backfill/` and `lab/` SQL were produced by one-off analysis scripts that are not in this repo. They follow these conventions: every INSERT is guarded by `WHERE NOT EXISTS` on the business key (`no_pendaftaran`, `no_kunjungan`, or `ucode = 'MYKLINIK-LAB:<sample>'`), and every rollback deletes only `id >` the max id at dump time.
+`backfill/` and `lab/` hold earlier one-off SQL produced by analysis scripts that are not in this repo. `build-sql.js` now generates the same kind of statements (same guards and rollback rules) as part of MIGRATE. `archive/{YYYY}/` holds MIGRATE's monthly zips.
 
 `output/`, `.env`, and `*.sql` are gitignored, so neither the SQL reference dumps nor the generated SQL are ever committed.
