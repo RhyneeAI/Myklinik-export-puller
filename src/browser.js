@@ -56,7 +56,10 @@ export async function createContext() {
     locale: 'id-ID',
   });
 
-  const cookies = parseCookies();
+  // Credentials win over captured cookies: a leftover session cookie would
+  // otherwise silently log in as whichever account it belonged to.
+  const hasCredentials = process.env.LOGIN_KEY && process.env.LOGIN_USER && process.env.LOGIN_PASS;
+  const cookies = hasCredentials ? [] : parseCookies();
   if (cookies.length > 0) await context.addCookies(cookies);
   return context;
 }

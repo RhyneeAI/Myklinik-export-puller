@@ -149,9 +149,14 @@ async function exportSingleDate(page, menuLabel, dateStart, outputPath) {
   }
 }
 
+// Months run newest -> oldest, days within a month run 1 -> N; the cursor is
+// the last completed day, so everything in a newer month is already done too.
 function shouldSkipDate(cursor, year, month, day) {
   if (!cursor) return false;
-  return cursor.year === year && cursor.month === month && day <= cursor.day;
+  const cur = cursor.year * 12 + cursor.month;
+  const ym = year * 12 + month;
+  if (ym > cur) return true;
+  return ym === cur && day <= cursor.day;
 }
 
 export async function processKunjungan(log, progress, context) {
