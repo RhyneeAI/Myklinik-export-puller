@@ -11,11 +11,13 @@
 //   --dry-run  log in, list what would be downloaded, download nothing
 //   --no-wait  exit instead of waiting when outside the download window
 //   --reparse  rebuild every .json from the already-downloaded files (offline)
+//   --only=pasien | --only=rekam-medis   download just one of the two lists
 import fs from 'fs';
 import path from 'path';
 import XLSX from 'xlsx';
 import dotenv from 'dotenv';
 import { createContext, close } from './browser.js';
+import { BASE, openView } from './session.js';
 import { createLogger, dim, green, yellow, red } from './logger.js';
 import { parseDateRange, generateMonthlyRange, looksLikeHTML, summarizeHtml, requestDelay, sleep } from './utils.js';
 
@@ -28,7 +30,6 @@ const {
   END_DATE,
 } = process.env;
 
-const BASE = (process.env.ENDPOINT_URL || 'https://apps.myklinik.id').replace(/\/+$/, '');
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3', 10);
 const BACKUP_DIR = path.join(OUTPUT_DIR, 'backup');
 const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000; // a month of one type can be thousands of rows
@@ -36,6 +37,8 @@ const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000; // a month of one type can be thousa
 const DRY_RUN = process.argv.includes('--dry-run');
 const NO_WAIT = process.argv.includes('--no-wait');
 const REPARSE = process.argv.includes('--reparse');
+// --only=pasien | --only=rekam-medis limits the run to one half of the page
+const ONLY = process.argv.find((a) => a.startsWith('--only='))?.split('=')[1] || '';
 
 // ─── Download window (WIB = UTC+7, no DST) ─────────────────────
 const WINDOW_OPEN_HOUR = 21;
@@ -129,94 +132,16 @@ function parseToRows(buffer) {
 
 class SessionExpiredError extends Error {}
 
-// ─── Page navigation & login ───────────────────────────────────
-async function clickMenu(page) {
-  await page.evaluate(() => {
-    const a = document.querySelector('a[href="#masterdata/upload/upload"]');
-    if (a) a.click();
-    else location.hash = 'masterdata/upload/upload';
-  });
-}
-
-// The captcha text arrives via a CreateCaptcha XHR ~1s after the login form
-// renders; submitting before then sends an empty captcha and the server
-// silently rejects it (the form just resets with a new captcha).
-async function login(page) {
-  if (!process.env.LOGIN_KEY || !process.env.LOGIN_USER || !process.env.LOGIN_PASS) {
-    throw new Error('Perlu login tapi LOGIN_KEY/LOGIN_USER/LOGIN_PASS tidak diisi di .env');
-  }
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    await page.waitForFunction(() => {
-      const c = document.querySelector('#captcha');
-      return c && c.textContent.trim().length > 0;
-    }, null, { timeout: 30000 });
-    const captcha = (await page.textContent('#captcha')).trim();
-    await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
-    await page.fill('#cUser', process.env.LOGIN_USER);
-    await page.fill('#cPassword', process.env.LOGIN_PASS);
-    await page.fill('#cCaptcha', captcha);
-    await page.waitForTimeout(500);
-    await page.click('#btnSubmit', { force: true });
-    await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
-    // After a successful login the page reloads and the sidebar menu takes a
-    // while to render; after a rejected one the login form comes back.
-    await page.waitForFunction(() => {
-      const k = document.querySelector('#ckeyKlinik');
-      const loginBack = k && k.offsetWidth > 0 && !k.value;
-      return loginBack || document.querySelector('a[href="#masterdata/upload/upload"]');
-    }, null, { timeout: 30000 }).catch(() => {});
-
-    const stillLogin = await page.isVisible('#ckeyKlinik').catch(() => false);
-    const loggedIn = !stillLogin && (await page.$('a[href="#masterdata/upload/upload"]'));
-    if (loggedIn) return;
-    if (!stillLogin) {
-      throw new Error(`Login berhasil tapi menu "Download Data" tidak ada — akun ${process.env.LOGIN_USER} mungkin tidak punya akses Master Data → Download Data`);
-    }
-    await page.waitForTimeout(2000 * attempt);
-  }
-  throw new Error(`Login gagal 3x untuk user "${process.env.LOGIN_USER}" — cek LOGIN_KEY/LOGIN_USER/LOGIN_PASS di .env`);
-}
+// ─── Page navigation & login (shared, see session.js) ──────────
+const DOWNLOAD_HREF = '#masterdata/upload/upload';
+// Both lists are server-side DataTables filled by XHR after the view loads
+const downloadViewReady = () =>
+  !!document.querySelector('#cDateMonth') &&
+  !!document.querySelector('#sc-DataTable-MR [onclick^="scDownLoadMR("]') &&
+  !!document.querySelector('#sc-DataTable-MRBackup [onclick^="scDownLoadMRBackup("]');
 
 async function openDownloadPage(page) {
-  const loginVisible = await page.isVisible('#ckeyKlinik').catch(() => false);
-  if (!loginVisible && (await page.$('#sc-DataTable-MRBackup'))) return;
-
-  if (!page.url().startsWith(BASE) || loginVisible) {
-    await page.goto(BASE, { waitUntil: 'load', timeout: 60000 });
-    await page.waitForTimeout(1500);
-  }
-  await clickMenu(page);
-
-  const first = await Promise.race([
-    page.waitForSelector('#ckeyKlinik', { state: 'visible', timeout: 30000 }).then(() => 'login'),
-    page.waitForSelector('#cDateMonth', { timeout: 30000 }).then(() => 'page'),
-  ]).catch(() => 'timeout');
-
-  if (first !== 'page' && (await page.isVisible('#ckeyKlinik').catch(() => false))) {
-    await login(page);
-    await clickMenu(page);
-  }
-
-  try {
-    // The view loads slowly (5-10s+ observed after the menu click)
-    await page.waitForSelector('#cDateMonth', { state: 'attached', timeout: 90000 });
-    // Both lists are server-side DataTables filled by XHR after the view loads
-    await page.waitForFunction(() =>
-      document.querySelector('#sc-DataTable-MR [onclick^="scDownLoadMR("]') &&
-      document.querySelector('#sc-DataTable-MRBackup [onclick^="scDownLoadMRBackup("]'),
-    null, { timeout: 90000 });
-  } catch (err) {
-    ensureDir(BACKUP_DIR);
-    const shot = path.join(BACKUP_DIR, '_last_error.png');
-    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    const state = await page.evaluate(() => ({
-      url: location.href,
-      loginVisible: !!document.querySelector('#ckeyKlinik') && document.querySelector('#ckeyKlinik').offsetWidth > 0,
-      menuLink: !!document.querySelector('a[href="#masterdata/upload/upload"]'),
-      cDateMonth: document.querySelectorAll('#cDateMonth').length,
-    })).catch(() => ({}));
-    throw new Error(`Halaman Download Data tidak terbuka (${JSON.stringify(state)}); screenshot: ${shot}`);
-  }
+  await openView(page, DOWNLOAD_HREF, downloadViewReady);
 }
 
 async function readCatalog(page) {
@@ -255,7 +180,7 @@ async function toCdate(page, year, month) {
 // ─── Tasks ─────────────────────────────────────────────────────
 function buildTasks(catalog, months) {
   const tasks = [];
-  for (const { start, end } of catalog.pasien) {
+  for (const { start, end } of ONLY === 'rekam-medis' ? [] : catalog.pasien) {
     const base = `${APP_TARGET}_pasien_${pad(start, 6)}_${pad(end, 6)}`;
     tasks.push({
       kind: 'pasien',
@@ -266,7 +191,7 @@ function buildTasks(catalog, months) {
       url: () => `sc.excelme.php?scRpt=masterdata/upload/medicalrecord&starQty=${start}&endQty=${end}`,
     });
   }
-  for (const { year, month } of months) {
+  for (const { year, month } of ONLY === 'pasien' ? [] : months) {
     for (const rm of catalog.rekamMedis) {
       const slug = slugify(rm.label);
       tasks.push({
