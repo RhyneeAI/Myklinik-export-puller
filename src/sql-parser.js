@@ -38,7 +38,7 @@ function findStatementEnd(str, from) {
   return str.length;
 }
 
-function parseInsertStatements(sqlContent) {
+export function parseInsertStatements(sqlContent) {
   const rows = [];
   const headerRegex = /INSERT INTO\s+`?(\w+)`?\s*\(([^)]+)\)\s*VALUES\s*/gi;
   let headerMatch;

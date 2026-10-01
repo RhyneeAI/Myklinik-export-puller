@@ -43,7 +43,7 @@ const MAX_SQL_FILE_BYTES = 1024 * 1024; // 1MB per file, split into _partN.sql b
 // Packs statement groups into size-capped chunks without ever splitting a
 // group apart (a kunjungan row's insert + its diagnosa/tindakan all share a
 // single @kunjungan_id, so they must land in the same file/transaction).
-function chunkGroupsBySize(groups, maxBytes) {
+export function chunkGroupsBySize(groups, maxBytes) {
   const chunks = [];
   let current = [];
   let currentSize = 0;
@@ -65,7 +65,7 @@ function chunkGroupsBySize(groups, maxBytes) {
 // Writes `groups` as one or more `${baseName}.sql` / `${baseName}_partN.sql`
 // files under `maxBytes`, each independently wrapped in its own transaction.
 // Returns how many files were written.
-function writeChunkedSql(dir, baseName, header, groups) {
+export function writeChunkedSql(dir, baseName, header, groups) {
   const chunks = chunkGroupsBySize(groups, MAX_SQL_FILE_BYTES);
   const multi = chunks.length > 1;
   chunks.forEach((statements, idx) => {
