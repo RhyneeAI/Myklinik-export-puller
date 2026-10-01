@@ -62,6 +62,12 @@ async function ensureOnReportPage(page, menuLabel) {
 
   // If login modal appeared, fill and submit
   if (waitResult === 'login') {
+    // The captcha text arrives via XHR ~1s after the form renders; reading it
+    // earlier submits an empty captcha and the login is silently rejected.
+    await page.waitForFunction(() => {
+      const c = document.querySelector('#captcha');
+      return c && c.textContent.trim().length > 0;
+    }, null, { timeout: 30000 }).catch(() => {});
     const captcha = (await page.textContent('#captcha')).trim();
     await page.fill('#ckeyKlinik', process.env.LOGIN_KEY);
     await page.fill('#cUser', process.env.LOGIN_USER);
