@@ -37,7 +37,7 @@ Copy `.env.example` to `.env`. The key variables:
 - `START_DATE` / `END_DATE` (`YYYY-MM`) — export walks backwards from `START_DATE` to `END_DATE`, so `START_DATE` must be the newer month.
 - `MODE` — `pendaftaran`, `kunjungan`, or `all` (EXPORT only).
 - `REQUEST_DELAY_MS` / `MAX_RETRIES` — scraper throttling/retry.
-- Auth: either `LOGIN_KEY`/`LOGIN_USER`/`LOGIN_PASS` (auto re-login when the session expires mid-run), or captured cookies (`COOKIES_JSON`, or individual `SERVERID`/`SOKKACREATIVEID`/`TOKEN`/`SESSION_NAME`/`SESSION_VALUE`/`KEY1`-`KEY4`). When all three credentials are set, the cookies are **ignored**. A leftover session cookie used to log in silently as a different, lower-access account ("Medisy"), which has no Master Data menu.
+- Auth: either `LOGIN_KEY`/`LOGIN_USER`/`LOGIN_PASS` (auto re-login when the session expires mid-run), or captured cookies (`COOKIES_JSON`, or individual `SERVERID`/`SOKKACREATIVEID`/`TOKEN`/`SESSION_NAME`/`SESSION_VALUE`/`KEY1`-`KEY4`). The cookie variables are **deprecated**: the README tells users to rely on credentials, which `session.js` requires anyway, and when all three credentials are set the cookies are ignored. A leftover session cookie used to log in silently as a different, lower-access account ("Medisy"), which has no Master Data menu.
 
 dotenv never overrides variables that are already set, so a one-off targeted export can be run without touching `.env`, e.g. `ACTION=EXPORT MODE=kunjungan START_DATE=2024-10 END_DATE=2024-10 OUTPUT_DIR=output/backfill_2024_10 npm start`. A separate `OUTPUT_DIR` also gives that run its own `.progress.json`.
 

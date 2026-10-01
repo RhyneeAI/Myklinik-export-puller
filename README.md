@@ -42,7 +42,7 @@ Untuk migrasi lengkap ke Medisy gunakan **`npm run migrate`** — satu perintah 
 
 - Node.js 18+
 - npm
-- Google Chrome (terinstall di system) — hanya untuk mode EXPORT
+- Google Chrome (terinstall di system) — untuk semua penarikan data (EXPORT, BACKUP, SOAP PDF, langkah 1–4 MIGRATE); tidak perlu untuk IMPORT, langkah 5–6 MIGRATE, dan `--reparse`
 
 ## Instalasi
 
@@ -70,14 +70,20 @@ cp .env.example .env
 | `MODE` | Jenis data EXPORT: `pendaftaran`, `kunjungan`, atau `all` | `all` |
 | `REQUEST_DELAY_MS` | Jeda antar request (ms) | `15000` |
 | `MAX_RETRIES` | Maksimal percobaan ulang per request | `3` |
-| `LOGIN_KEY` / `LOGIN_USER` / `LOGIN_PASS` | Kredensial login (juga untuk auto re-login saat session expired). **Kalau ketiganya diisi, cookie di bawah diabaikan.** Pastikan ini akun dengan akses yang dibutuhkan (BACKUP butuh menu Master → Download Data) | |
-| `COOKIES_JSON` | Semua cookies sebagai JSON (dari DevTools → Copy as JSON), alternatif dari kredensial login | |
-| `SERVERID` | Cookie SERVERID | |
-| `SOKKACREATIVEID` | Cookie SOKKACREATIVEID | |
-| `TOKEN` | Cookie token | |
-| `SESSION_NAME` | Nama cookie session PHP (acak) | |
-| `SESSION_VALUE` | Value cookie session PHP | |
-| `KEY1` – `KEY4` | Cookie autentikasi | |
+| `LOGIN_KEY` / `LOGIN_USER` / `LOGIN_PASS` | **Wajib.** Kredensial login (juga untuk login ulang otomatis saat session expired). Pakai akun dengan akses yang dibutuhkan — BACKUP/MIGRATE butuh menu **Master → Download Data** dan **SOAP & Diagnosa** | |
+
+#### Variable deprecated (tidak diperlukan lagi)
+
+Cookie hasil copy dari browser **tidak dipakai lagi** — semua tool login sendiri memakai `LOGIN_KEY`/`LOGIN_USER`/`LOGIN_PASS`, dan kalau ketiganya diisi cookie di bawah **diabaikan**. Boleh dihapus/dikosongkan dari `.env` (cookie lama justru bisa membuat browser masuk sebagai akun lain bila kredensial tidak diisi).
+
+| Variable | Status |
+|---|---|
+| `COOKIES_JSON` | deprecated |
+| `SERVERID` (atau `SERVEID`) | deprecated |
+| `SOKKACREATIVEID` | deprecated |
+| `TOKEN` | deprecated |
+| `SESSION_NAME` / `SESSION_VALUE` | deprecated |
+| `KEY1` – `KEY4` | deprecated |
 
 Tambahan environment variable opsional (bukan di `.env`, diset langsung saat menjalankan perintah):
 
@@ -93,15 +99,40 @@ Variable yang diset langsung di perintah **mengalahkan** isi `.env`. Jadi untuk 
 ACTION=EXPORT MODE=kunjungan START_DATE=2024-10 END_DATE=2024-10 OUTPUT_DIR=output/backfill_2024_10 npm start
 ```
 
-### Mendapatkan Cookie
+### Mendapatkan Cookie *(deprecated)*
 
-1. Buka `https://apps.myklinik.id/` di browser
-2. Login seperti biasa
-3. Buka Developer Tools (F12) → tab **Application** → **Cookies** → `apps.myklinik.id`
-4. Klik kanan di tabel cookies → **Copy All** → **Copy as JSON**, paste ke `COOKIES_JSON` di `.env`
-   Atau copy manual nilai masing-masing cookie ke variable individu (`SERVERID`, `SOKKACREATIVEID`, `TOKEN`, `SESSION_NAME`, `SESSION_VALUE`, `KEY1`–`KEY4`)
+Tidak diperlukan lagi — isi `LOGIN_KEY`/`LOGIN_USER`/`LOGIN_PASS` saja. Cookie hanya dipakai kalau kredensial login dikosongkan, dan login ulang otomatis tidak bisa berjalan tanpa kredensial.
 
 ## Penggunaan
+
+### Ringkasan perintah & flag
+
+| Perintah | Fungsi |
+|---|---|
+| `npm run migrate` | **Semua langkah migrasi** (pasien → kunjungan → 11 Rekam Medis → PDF SOAP → SQL → zip) — lihat [MIGRATE](#migrate--semua-langkah-dalam-satu-perintah) |
+| `npm start` | Menu lama: EXPORT / IMPORT / MERGED KUNJUNGAN |
+| `npm run backup` | Tarik Download Data (Data Pasien + 11 jenis Rekam Medis), jam 21.00–06.00 WIB |
+| `npm run soap-pdf` | Tarik & baca PDF SOAP per kunjungan |
+
+Flag ditulis setelah `--`, contoh: `npm run migrate -- --steps=4,5 --no-wait`.
+
+| Perintah | Flag | Arti |
+|---|---|---|
+| `migrate` | `--steps=2,4,5` | Hanya langkah tertentu (nomor `1`–`6` atau nama: `pasien`, `kunjungan`, `rekam-medis`, `soap-pdf`, `sql`, `zip`) |
+| | `--from=4` | Mulai dari langkah tertentu (untuk melanjutkan setelah gagal) |
+| | `--no-wait` | Di luar jam 21.00–06.00 WIB, lewati langkah 1 & 3 alih-alih menunggu |
+| `backup` | `--only=pasien` / `--only=rekam-medis` | Hanya Data Pasien / hanya 11 jenis Rekam Medis |
+| | `--dry-run` | Login & tampilkan daftar file yang akan diunduh (bisa kapan saja) |
+| | `--no-wait` | Keluar kalau di luar jam download, bukan menunggu |
+| | `--reparse` | Buat ulang semua `.json` dari file yang sudah diunduh (offline) |
+| `soap-pdf` | `--limit=N` | Unduh maksimal N PDF (untuk uji coba) |
+| | `--month=YYYY_MM` | Hanya satu bulan |
+| | `--reparse` | Baca ulang PDF yang sudah ada tanpa mengunduh (offline) |
+| | `--dry-run` | Tampilkan jumlah PDF yang akan diunduh tanpa mengunduh |
+
+Environment variable bisa ditulis di depan perintah untuk sekali jalan tanpa mengubah `.env`, mis. `START_DATE=2026-09 END_DATE=2026-08 npm run migrate -- --steps=sql,zip` atau `PLAYWRIGHT_HEADLESS=false npm run soap-pdf -- --limit=3` (browser terlihat, untuk debugging).
+
+### Menu `npm start`
 
 ```bash
 npm start
@@ -178,6 +209,7 @@ npm run backup                  # tunggu jam download, lalu download semua
 npm run backup -- --dry-run     # login & tampilkan daftar file yang akan didownload (bisa kapan saja)
 npm run backup -- --no-wait     # keluar kalau di luar jam download, bukan menunggu
 npm run backup -- --reparse     # buat ulang semua .json dari file yang sudah didownload (offline)
+npm run backup -- --only=pasien # hanya Data Pasien (atau --only=rekam-medis untuk 11 jenis Rekam Medis saja)
 ```
 
 - **Data Pasien** — semua bagian yang tampil di halaman (mis. 1–1000, 1001–2000, ...), rentangnya dibaca langsung dari halaman.
@@ -213,7 +245,7 @@ npm run migrate -- --from=4           # lanjut dari langkah 4 (mis. setelah lang
 - **TTV** dari PDF: nilai `0` berarti tidak diisi (dikosongkan); nilai yang tidak wajar (mis. suhu 3.7) dikosongkan dan dicatat di recap.
 - **Zip (langkah 6):** `output/archive/{YYYY}/{APP_TARGET}_{YYYY}_{MM}.zip` berisi `pendaftaran/`, `kunjungan/`, `rekam-medis/`, `soap-pdf/` bulan itu; Data Pasien di `output/archive/{APP_TARGET}_pasien.zip`. Berisi data medis pasien — simpan dengan aman.
 
-PDF SOAP juga bisa ditarik sendiri: `npm run soap-pdf` (opsi `--limit=N`, `--month=YYYY_MM`, `--reparse` untuk membaca ulang PDF yang sudah ada tanpa internet).
+PDF SOAP juga bisa ditarik sendiri: `npm run soap-pdf` (opsi `--limit=N`, `--month=YYYY_MM`, `--reparse` untuk membaca ulang PDF yang sudah ada tanpa internet, `--dry-run` untuk melihat jumlahnya saja).
 
 ## Migrasi ke Medisy (catatan)
 
